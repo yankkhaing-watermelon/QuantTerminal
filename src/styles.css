@@ -63,17 +63,17 @@ nav button{padding:9px 14px}.page-title{margin-bottom:10px}.page-title h2{font-s
 
 /* Preserve the preferred legacy layout with current header and name hierarchy. */
 .brand-mark-orange{
-  width:40px;height:40px;flex:0 0 40px;display:grid;place-items:center;border-radius:5px;
-  background:#fb8b1e!important;color:#000000!important;font-size:12px;font-weight:950;
+  width:48px;height:48px;flex:0 0 48px;display:grid;place-items:center;border-radius:10px;
+  background:#fb8b1e!important;color:#000000!important;font-size:14px;font-weight:950;letter-spacing:-.03em;
   border:0!important;outline:0!important;box-shadow:none!important;background-image:none!important
 }
 .run-button-orange{
-  min-width:88px;min-height:40px;display:inline-flex;align-items:center;justify-content:center;gap:8px;
-  padding:0 14px;border-radius:5px;background:#fb8b1e!important;color:#000000!important;
+  min-width:105px;min-height:48px;display:inline-flex;align-items:center;justify-content:center;gap:9px;
+  padding:0 18px;border-radius:10px;background:#fb8b1e!important;color:#000000!important;
   border:0!important;outline:0!important;box-shadow:none!important;background-image:none!important;
-  font-size:12px;font-weight:900;text-decoration:none
+  font-size:13px;font-weight:900;text-decoration:none;letter-spacing:.01em
 }
-.run-button-orange span{font-size:13px}
+.run-button-orange span{font-size:15px}
 .brand-mark-orange:focus,.brand-mark-orange:focus-visible,.run-button-orange:focus,.run-button-orange:focus-visible{border:0!important;outline:0!important;box-shadow:none!important}
 .brand-mark,.run-button,.run-button:hover,.run-button:active,.run-button:visited{
   background:#fb8b1e!important;
@@ -96,9 +96,10 @@ nav button{padding:9px 14px}.page-title{margin-bottom:10px}.page-title h2{font-s
 .research-identity strong{max-width:250px}
 .research-identity>span{flex:0 1 auto;max-width:42%;text-align:right}
 @media(max-width:620px){
-  .brand-mark-orange{width:31px;height:33px;flex-basis:31px;border-radius:4px;font-size:9px}
-  .run-button-orange{min-width:54px;min-height:33px;padding:0 7px;border-radius:4px;font-size:10px}
-  .run-button-orange span{font-size:9px}
+  header{min-height:72px;padding:10px}
+  .brand-mark-orange{width:35px;height:38px;flex-basis:35px;border-radius:8px;font-size:11px}
+  .run-button-orange{min-width:62px;min-height:40px;padding:0 9px;border-radius:8px;font-size:10px}
+  .run-button-orange span{font-size:11px}
   .position-head h4,.research-identity h4{font-size:9px}
   .position-head h4+span,.research-identity strong{font-size:14px}
   .position-head h4+span{max-width:205px}
