@@ -2,11 +2,30 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 from pathlib import Path
 
 import requests
+
+
+def token_fingerprint(token: str) -> str:
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()[:16]
+
+
+def check_auth(session: requests.Session, base: str, token: str) -> None:
+    local = token_fingerprint(token)
+    response = session.get(f"{base}/api/auth-fingerprint", timeout=30)
+    if not response.ok:
+        raise RuntimeError(f"auth diagnostic failed with HTTP {response.status_code}: {response.text[:300]}")
+    data = response.json()
+    remote = str(data.get("fingerprint") or "")
+    if not data.get("configured"):
+        raise RuntimeError("Cloudflare PUBLISH_TOKEN is not configured")
+    if remote != local:
+        raise RuntimeError(f"PUBLISH_TOKEN_MISMATCH: github={local} cloudflare={remote}")
+    print(f"PUBLISH_TOKEN fingerprint match: {local}")
 
 
 def post(session: requests.Session, url: str, payload: dict) -> dict:
@@ -36,6 +55,7 @@ def main() -> int:
     session = requests.Session()
     session.headers.update({"authorization": f"Bearer {token}", "user-agent": "bmk-quant-publisher/5.0"})
     base = args.api_base.rstrip("/")
+    check_auth(session, base, token)
     print("Research archive start:", post(session, f"{base}/api/admin/runs/{run_id}/research/start", {"expected_symbols": len(research)}))
     for batch in chunks(research):
         post(session, f"{base}/api/admin/runs/{run_id}/research/batch", {"rows": batch})
