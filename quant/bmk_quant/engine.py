@@ -299,6 +299,25 @@ def _breadth(scored: list[dict], benchmark: pd.Series) -> tuple[dict, dict]:
     return breadth, {"state": state, "score": _finite(score), "confidence": _finite(min(95, 55 + abs(score - 50))), "components": components, "summary": "KLCI trend, Bursa breadth, sector breadth, volume, volatility and participation."}
 
 
+def _assign_quant_sextiles(frame: pd.DataFrame, group_labels: list[str]) -> pd.DataFrame:
+    """Assign balanced, score-ordered groups independently inside each period."""
+    assigned = frame.copy()
+    assigned["group"] = None
+    valid_indices: list[int] = []
+    for _, cohort in assigned.groupby("period", sort=False):
+        if len(cohort) < len(group_labels):
+            continue
+        ordered = cohort.sort_values("quant_score", kind="mergesort")
+        for label, indices in zip(
+            group_labels,
+            np.array_split(ordered.index.to_numpy(), len(group_labels)),
+            strict=True,
+        ):
+            assigned.loc[indices, "group"] = label
+        valid_indices.extend(cohort.index.tolist())
+    return assigned.loc[valid_indices]
+
+
 def _backtest(metadata: dict[str, Security], prices: dict[str, pd.DataFrame], benchmark: pd.Series) -> dict:
     group_labels = ["Q1", "Q2", "Q3", "Q4", "Q5", "Q6"]
     empty = {
@@ -343,17 +362,7 @@ def _backtest(metadata: dict[str, Security], prices: dict[str, pd.DataFrame], be
                 records.append({"quant_score": row["quant_score"], "forward": forward, "period": lag})
     if not records:
         return empty
-    frame = pd.DataFrame(records)
-    frame["group"] = None
-    valid_indices: list[int] = []
-    for _, cohort in frame.groupby("period"):
-        if len(cohort) < len(group_labels):
-            continue
-        frame.loc[cohort.index, "group"] = pd.qcut(
-            cohort.quant_score.rank(method="first"), len(group_labels), labels=group_labels,
-        ).astype(str)
-        valid_indices.extend(cohort.index.tolist())
-    frame = frame.loc[valid_indices]
+    frame = _assign_quant_sextiles(pd.DataFrame(records), group_labels)
     if frame.empty:
         return empty
     groups = []

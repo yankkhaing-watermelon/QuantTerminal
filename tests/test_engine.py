@@ -7,7 +7,7 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "quant"))
 
-from bmk_quant.engine import _backtest, _percentile, _portfolio, _rsi  # noqa: E402
+from bmk_quant.engine import _assign_quant_sextiles, _backtest, _percentile, _portfolio, _rsi  # noqa: E402
 from bmk_quant.universe import Security  # noqa: E402
 
 
@@ -69,6 +69,25 @@ class EngineTests(unittest.TestCase):
         self.assertEqual(sum(cohort["observations"] for cohort in result["cohorts"]), result["total_trades"])
         self.assertEqual(result["methodology"]["forward_horizon_sessions"], 20)
         self.assertEqual(result["methodology"]["grouping"], "cross_sectional_quant_score_sextiles_by_period")
+
+    def test_sextiles_are_balanced_and_score_ordered_in_each_period(self):
+        labels = ["Q1", "Q2", "Q3", "Q4", "Q5", "Q6"]
+        frame = pd.DataFrame([
+            {"period": period, "quant_score": float(score), "forward": 0.01}
+            for period, size in ((80, 13), (60, 14), (40, 17), (20, 19))
+            for score in range(size)
+        ])
+
+        assigned = _assign_quant_sextiles(frame, labels)
+
+        counts = assigned.groupby("group").size().reindex(labels)
+        self.assertLessEqual(int(counts.max() - counts.min()), 4)
+        for _, cohort in assigned.groupby("period"):
+            cohort_counts = cohort.groupby("group").size().reindex(labels, fill_value=0)
+            self.assertLessEqual(int(cohort_counts.max() - cohort_counts.min()), 1)
+            maxima = cohort.groupby("group").quant_score.max().reindex(labels)
+            minima = cohort.groupby("group").quant_score.min().reindex(labels)
+            self.assertTrue(all(maxima.iloc[index] <= minima.iloc[index + 1] for index in range(5)))
 
 
 if __name__ == "__main__":
