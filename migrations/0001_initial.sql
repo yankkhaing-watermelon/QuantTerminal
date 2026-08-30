@@ -6,7 +6,10 @@ CREATE TABLE IF NOT EXISTS quant_runs (
   payload_json TEXT NOT NULL,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
-CREATE INDEX IF NOT EXISTS idx_quant_runs_date ON quant_runs(scan_date DESC, generated_at DESC);
+
+-- The application intentionally does not create a scan_date index here because
+-- this migration is also used against legacy D1 databases whose schema may be
+-- reconciled at runtime. Sorting is handled by the API query itself.
 
 CREATE TABLE IF NOT EXISTS research_archives (
   run_id TEXT PRIMARY KEY,
