@@ -51,9 +51,25 @@ def chunks(rows: list[dict], size: int = 75):
         yield rows[index:index + size]
 
 
+def canonical_research(research: list[dict]) -> list[dict]:
+    return sorted(research, key=lambda row: str(row.get("symbol") or ""))
+
+
 def research_fingerprint(research: list[dict]) -> str:
-    canonical = sorted(research, key=lambda row: str(row.get("symbol") or ""))
-    encoded = json.dumps(canonical, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False).encode("utf-8")
+    encoded = json.dumps(canonical_research(research), sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()[:12]
+
+
+def publication_fingerprint(payload: dict, research: list[dict]) -> str:
+    identity_payload = dict(payload)
+    identity_payload.pop("run_id", None)
+    encoded = json.dumps(
+        {"payload": identity_payload, "research": canonical_research(research)},
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+        allow_nan=False,
+    ).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()[:12]
 
 
@@ -61,7 +77,7 @@ def content_addressed_run_id(payload: dict, research: list[dict]) -> str:
     scan_date = str(payload.get("scan_date") or "").strip()
     if not scan_date:
         raise RuntimeError("missing scan_date for content-addressed run id")
-    return f"qv5-{scan_date}-{research_fingerprint(research)}"
+    return f"qv5-{scan_date}-{publication_fingerprint(payload, research)}"
 
 
 def validate_archive_status(status: dict, run_id: str, expected_symbols: int) -> None:
@@ -110,6 +126,7 @@ def main() -> int:
         "latest_file_sha256": file_sha256(latest_path),
         "research_file_sha256": file_sha256(research_path),
         "research_fingerprint": research_fingerprint(research),
+        "publication_fingerprint": publication_fingerprint(payload, research),
     }
 
     session = requests.Session()
