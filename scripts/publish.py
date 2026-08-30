@@ -14,6 +14,10 @@ def token_fingerprint(token: str) -> str:
     return hashlib.sha256(token.encode("utf-8")).hexdigest()[:16]
 
 
+def file_sha256(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
 def check_auth(session: requests.Session, base: str, token: str) -> None:
     local = token_fingerprint(token)
     response = session.get(f"{base}/api/auth-fingerprint", timeout=30)
@@ -38,7 +42,7 @@ def post(session: requests.Session, url: str, payload: dict) -> dict:
 def get(session: requests.Session, url: str) -> dict:
     response = session.get(url, timeout=60)
     if not response.ok:
-        raise RuntimeError(f"archive verification rejected with HTTP {response.status_code}: {response.text[:500]}")
+        raise RuntimeError(f"verification request rejected with HTTP {response.status_code}: {response.text[:500]}")
     return response.json()
 
 
@@ -90,17 +94,26 @@ def main() -> int:
 
     root = Path(args.artifacts)
     latest_path = root / "latest.json"
+    research_path = root / "research.json"
     payload = json.loads(latest_path.read_text(encoding="utf-8"))
-    research = json.loads((root / "research.json").read_text(encoding="utf-8"))
+    research = json.loads(research_path.read_text(encoding="utf-8"))
     if not isinstance(research, list) or not research:
         raise RuntimeError("research.json must contain at least one row")
 
     run_id = content_addressed_run_id(payload, research)
     payload["run_id"] = run_id
-    latest_path.write_text(json.dumps(payload, separators=(",", ":"), ensure_ascii=False), encoding="utf-8")
+    latest_path.write_text(json.dumps(payload, separators=(",", ":"), ensure_ascii=False, allow_nan=False), encoding="utf-8")
+    local_integrity = {
+        "schema_version": 1,
+        "run_id": run_id,
+        "scan_date": payload.get("scan_date"),
+        "latest_file_sha256": file_sha256(latest_path),
+        "research_file_sha256": file_sha256(research_path),
+        "research_fingerprint": research_fingerprint(research),
+    }
 
     session = requests.Session()
-    session.headers.update({"authorization": f"Bearer {token}", "user-agent": "bmk-quant-publisher/5.0-step13"})
+    session.headers.update({"authorization": f"Bearer {token}", "user-agent": "bmk-quant-publisher/5.0-step15"})
     base = args.api_base.rstrip("/")
     check_auth(session, base, token)
 
@@ -119,13 +132,34 @@ def main() -> int:
         post(session, f"{base}/api/admin/runs/{run_id}/portfolio", {"rows": batch})
 
     publication = post(session, f"{base}/api/admin/publish", {"data": payload})
+    if publication.get("publication_integrity") != "verified":
+        raise RuntimeError(f"Quant publication did not confirm payload integrity: {publication}")
     if publication.get("research_integrity") != "verified":
         raise RuntimeError(f"Quant publication did not confirm research integrity: {publication}")
     if publication.get("research_payload_hash") != archive.get("payload_hash"):
         raise RuntimeError("Quant publication research payload hash differs from verified archive")
     if publication.get("research_manifest_hash") != archive.get("manifest_hash"):
         raise RuntimeError("Quant publication research manifest hash differs from verified archive")
+
+    live = get(session, f"{base}/api/latest")
+    if not live.get("ok") or live.get("integrity") != "verified" or not isinstance(live.get("data"), dict):
+        raise RuntimeError(f"live publication integrity check failed: {live}")
+    if str(live["data"].get("run_id") or "") != run_id:
+        raise RuntimeError(f"live run_id mismatch: {live['data'].get('run_id')} != {run_id}")
+    if str(live.get("payload_hash") or "") != str(publication.get("payload_hash") or ""):
+        raise RuntimeError("live payload hash differs from committed publication hash")
+
+    integrity = {
+        **local_integrity,
+        "server_payload_hash": publication.get("payload_hash"),
+        "research_payload_hash": archive.get("payload_hash"),
+        "research_manifest_hash": archive.get("manifest_hash"),
+        "publication_integrity": publication.get("publication_integrity"),
+        "live_integrity": live.get("integrity"),
+    }
+    (root / "integrity.json").write_text(json.dumps(integrity, indent=2, sort_keys=True), encoding="utf-8")
     print("Quant publication:", publication)
+    print("Live publication integrity verified:", run_id)
     return 0
 
 
