@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 
-const TABS = ["Overview", "Rankings", "Portfolio", "Regime", "Backtest", "Performance", "Research", "Activity"];
+const TABS = ["Overview", "Rankings", "Portfolio", "Regime", "Backtest", "Performance", "Research"];
 const COLORS = { strong: "#38f2b0", positive: "#84e46d", neutral: "#ffcb45", negative: "#ff7b72", muted: "#7f91a8" };
 
 const DEMO_DATA = {
@@ -56,10 +56,11 @@ function Overview({ data }) {
 }
 
 function Rankings({ data }) {
+  const [view, setView] = useState("quant");
   const [query, setQuery] = useState("");
   const [decision, setDecision] = useState("ALL");
   const rows = (data.stocks || []).filter((row) => (!query || `${row.symbol} ${row.name || ""} ${row.sector || ""}`.toLowerCase().includes(query.toLowerCase())) && (decision === "ALL" || row.action === decision));
-  return <section className="panel"><div className="panel-head stacked-mobile"><div><span className="eyebrow">CROSS-SECTIONAL MODEL</span><h3>Quant rankings</h3></div><div className="filters"><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search symbol or sector" aria-label="Search rankings"/><select value={decision} onChange={(event) => setDecision(event.target.value)} aria-label="Filter decision"><option>ALL</option><option>ADD</option><option>HOLD</option><option>WATCH</option><option>TRIM</option><option>REDUCE</option><option>EXIT</option></select></div></div><StockTable rows={rows}/></section>;
+  return <><div className="ranking-switch" role="tablist" aria-label="Ranking views"><button type="button" role="tab" aria-selected={view === "quant"} className={view === "quant" ? "active" : ""} onClick={() => setView("quant")}>Quant Ranking</button><button type="button" role="tab" aria-selected={view === "activity"} className={view === "activity" ? "active" : ""} onClick={() => setView("activity")}>Abnormal Activity</button></div>{view === "quant" ? <section className="panel ranking-panel"><div className="panel-head stacked-mobile"><div><span className="eyebrow">CROSS-SECTIONAL MODEL</span><h3>Quant rankings</h3></div><div className="filters"><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search symbol or sector" aria-label="Search rankings"/><select value={decision} onChange={(event) => setDecision(event.target.value)} aria-label="Filter decision"><option>ALL</option><option>ADD</option><option>HOLD</option><option>WATCH</option><option>TRIM</option><option>REDUCE</option><option>EXIT</option></select></div></div><StockTable rows={rows}/></section> : <Activity data={data}/>}</>;
 }
 
 function Portfolio({ data }) {
@@ -91,8 +92,12 @@ function Research({ data }) {
 }
 
 function Activity({ data }) {
-  const rows = data.abnormal_activity || [];
-  return <section className="panel"><div className="panel-head"><div><span className="eyebrow">NEUTRAL MONITOR</span><h3>Unexplained activity</h3></div><Badge kind="neutral">NOT AN INSIDER SIGNAL</Badge></div><p className="disclaimer">Flags unusual price, volume, turnover, volatility, or relative-strength behavior only. It does not identify leaked information or insider trading.</p>{rows.length ? <div className="activity-list">{rows.map((row) => <article key={row.symbol}><div><h4>{row.symbol}</h4><span>{row.reason || "Multi-factor deviation"}</span></div><strong>{num(row.activity_score, 0)}</strong><div className="activity-factors">{Object.entries(row.factors || {}).map(([key, value]) => <span key={key}>{key.replaceAll("_", " ")} <b>{num(value, 1)}σ</b></span>)}</div></article>)}</div> : <Empty title="No unexplained activity flags" text="Daily standardized anomaly checks will appear here when thresholds are exceeded."/>}</section>;
+  const [query, setQuery] = useState("");
+  const [level, setLevel] = useState("ALL");
+  const source = data.unexplained_activity || data.abnormal_activity || [];
+  const summary = data.unexplained_activity_summary || {};
+  const rows = source.filter((row) => (!query || `${row.symbol} ${row.name || ""} ${row.sector || ""}`.toLowerCase().includes(query.toLowerCase())) && (level === "ALL" || row.activity_level === level));
+  return <><section className="activity-summary metric-grid"><Metric label="Flagged" value={summary.flagged ?? source.length} detail="Daily deviations"/><Metric label="Very high" value={summary.very_high ?? source.filter((row) => row.activity_level === "VERY HIGH").length} detail="Highest severity"/><Metric label="High" value={summary.high ?? source.filter((row) => row.activity_level === "HIGH").length} detail="High severity"/><Metric label="Elevated" value={summary.elevated ?? source.filter((row) => row.activity_level === "ELEVATED").length} detail="Monitor"/></section><section className="panel activity-panel"><div className="panel-head stacked-mobile"><div><span className="eyebrow">NEUTRAL MARKET-BEHAVIOUR MONITOR</span><h3>Unexplained activity</h3></div><div className="filters"><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search code or company" aria-label="Search unexplained activity"/><select value={level} onChange={(event) => setLevel(event.target.value)} aria-label="Filter activity level"><option value="ALL">ALL LEVELS</option><option value="VERY HIGH">VERY HIGH</option><option value="HIGH">HIGH</option><option value="ELEVATED">ELEVATED</option></select></div></div><p className="disclaimer">Flags unusual price, volume, turnover, volatility, or relative-strength behaviour only. It is not an allegation or a trade instruction and does not identify leaked information or insider trading.</p>{rows.length ? <div className="activity-list">{rows.map((row) => <article key={row.symbol}><div><h4>{row.symbol}</h4><span>{row.name || row.reason || "Multi-factor deviation"}</span><small>{row.reason || "Multi-factor deviation"}</small></div><strong className={`activity-score ${String(row.activity_level || "").toLowerCase().replaceAll(" ", "-")}`}>{num(row.activity_score, 0)}<small>{row.activity_level || "FLAGGED"}</small></strong><div className="activity-factors">{Object.entries(row.factors || {}).map(([key, value]) => <span key={key}>{key.replaceAll("_", " ")} <b>{num(value, 1)}σ</b></span>)}</div></article>)}</div> : <Empty title="No matching activity flags" text="Adjust the search or severity filter to view the published daily deviations."/>}</section></>;
 }
 
 export default function App() {
@@ -109,7 +114,7 @@ export default function App() {
     }).catch(() => live && setStatus("offline"));
     return () => { live = false; };
   }, []);
-  const pages = { Overview, Rankings, Portfolio, Regime, Backtest, Performance, Research, Activity };
+  const pages = { Overview, Rankings, Portfolio, Regime, Backtest, Performance, Research };
   const Page = pages[active];
   return <div className="app-shell"><header><div className="brand"><div className="brand-mark">MK</div><div><h1>QUANT TERMINAL</h1><span>BURSA MUSANGKING</span></div></div><div className="header-meta"><div><span>SCAN DATE</span><b>{data.scan_date || "—"}</b></div><div><span>STATUS</span><b className={status === "live" ? "up" : "flat"}><i />{status.toUpperCase()}</b></div><button className="theme" onClick={() => setTheme(theme === "dark" ? "light" : "dark")} aria-label="Toggle theme">{theme === "dark" ? "☀" : "◐"}</button></div></header><nav aria-label="Terminal sections">{TABS.map((tab) => <button key={tab} className={active === tab ? "active" : ""} onClick={() => setActive(tab)}>{tab}</button>)}</nav><main><div className="page-title"><div><span className="eyebrow">{data.market || "MYX"} · {data.benchmark || "^KLSE"}</span><h2>{active}</h2></div><div className="updated"><span>LAST UPDATED</span><b>{dateTime(data.generated_at)}</b></div></div>{status !== "live" && <div className={`notice ${status}`}>{status === "loading" ? "Connecting to Quant API…" : status === "empty" ? "Deployment is ready. Waiting for the first daily quant publication." : "Quant API is unavailable. The interface remains ready and will reconnect on reload."}</div>}<Page data={data}/></main><footer><span>Bursa MusangKing Quant Terminal v5.0 · Phases 1–15</span><span>Research and ranking output only. No profitability is guaranteed.</span></footer></div>;
 }
