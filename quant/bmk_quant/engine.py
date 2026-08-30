@@ -326,17 +326,85 @@ def _backtest(scored: list[dict], prices: dict[str, pd.DataFrame]) -> dict:
     return {"total_trades": len(frame), "win_rate": _finite((frame.forward > 0).mean() * 100), "expectancy": _finite(frame.forward.mean() * 100), "max_drawdown": _finite(drawdown.min() * 100), "groups": groups}
 
 
-def _portfolio(scored: list[dict]) -> tuple[list[dict], dict]:
+REGIME_EXPOSURE_CAP = {
+    "STRONG RISK-ON": 100.0,
+    "RISK-ON": 85.0,
+    "NEUTRAL": 70.0,
+    "RISK-OFF": 45.0,
+    "STRONG RISK-OFF": 25.0,
+}
+MAX_POSITION_WEIGHT = 15.0
+ACTION_SIZE_MULTIPLIER = {
+    "ADD": 1.0,
+    "HOLD": 0.85,
+    "WATCH": 0.55,
+    "TRIM": 0.35,
+    "REDUCE": 0.15,
+    "EXIT": 0.0,
+}
+
+
+def _capped_weights(raw: np.ndarray, total: float, cap: float) -> np.ndarray:
+    """Proportionally allocate exposure without breaching a single-name cap."""
+    weights = np.zeros(len(raw), dtype=float)
+    active = [index for index, value in enumerate(raw) if value > 0]
+    remaining = min(float(total), cap * len(active))
+    while active and remaining > 1e-9:
+        raw_total = float(sum(raw[index] for index in active))
+        if raw_total <= 0:
+            break
+        provisional = {index: remaining * raw[index] / raw_total for index in active}
+        capped = [index for index, value in provisional.items() if value > cap + 1e-9]
+        if not capped:
+            for index, value in provisional.items():
+                weights[index] = value
+            break
+        for index in capped:
+            weights[index] = cap
+            remaining -= cap
+            active.remove(index)
+    return weights
+
+
+def _portfolio(scored: list[dict], regime_state: str) -> tuple[list[dict], dict]:
     requested = {item.strip().upper() for item in os.getenv("PORTFOLIO_SYMBOLS", "").split(",") if item.strip()}
     selected = [row for row in scored if row["symbol"] in requested]
     if not selected:
         return [], {}
-    raw = np.array([max(0, row["expected_edge"]) / max(row["volatility"], 5) for row in selected])
-    weights = raw / raw.sum() * min(100, 12 * len(selected)) if raw.sum() else np.zeros(len(selected))
+    exposure_cap = REGIME_EXPOSURE_CAP.get(regime_state, REGIME_EXPOSURE_CAP["NEUTRAL"])
+    raw = np.array([
+        max(0, row["expected_edge"]) * ACTION_SIZE_MULTIPLIER.get(row["action"], 0) / max(row["volatility"], 5)
+        for row in selected
+    ])
+    weights = _capped_weights(raw, exposure_cap, MAX_POSITION_WEIGHT)
     result = []
     for row, weight in zip(selected, weights, strict=True):
-        result.append({"symbol": row["symbol"], "action": row["action"], "target_weight": _finite(weight), "position_size": _finite(weight), "risk_contribution": _finite(weight * row["volatility"] / 100), "stop_price": _finite(row["close"] - 3 * row["atr"], 4), "beta": row["beta"]})
-    summary = {"capital_deployed": _finite(weights.sum()), "beta": _finite(np.average([row["beta"] for row in selected], weights=np.maximum(weights, .001))), "risk_used": _finite(sum(row["risk_contribution"] for row in result)), "diversification_score": _finite(min(100, len(result) * 12.5))}
+        stop_price = max(0.001, row["close"] - 3 * row["atr"])
+        result.append({
+            "symbol": row["symbol"], "action": row["action"],
+            "target_weight": _finite(weight), "position_size": _finite(weight),
+            "risk_contribution": _finite(weight * row["volatility"] / 100),
+            "stop_price": _finite(stop_price, 4), "beta": row["beta"],
+        })
+    deployed = sum(float(row["target_weight"] or 0) for row in result)
+    active = [row for row in result if float(row["target_weight"] or 0) > 0]
+    if deployed > 0:
+        portfolio_beta = sum(float(row["target_weight"]) * float(row["beta"]) for row in active) / deployed
+        normalized = [float(row["target_weight"]) / deployed for row in active]
+        effective_positions = 1 / sum(weight * weight for weight in normalized)
+    else:
+        portfolio_beta, effective_positions = 0.0, 0.0
+    summary = {
+        "regime": regime_state,
+        "exposure_cap": _finite(exposure_cap),
+        "capital_deployed": _finite(deployed),
+        "cash_reserve": _finite(100 - deployed),
+        "beta": _finite(portfolio_beta),
+        "risk_used": _finite(sum(float(row["risk_contribution"] or 0) for row in result)),
+        "max_single_weight": _finite(max((float(row["target_weight"] or 0) for row in result), default=0)),
+        "effective_positions": _finite(effective_positions),
+        "diversification_score": _finite(min(100, effective_positions * 12.5)),
+    }
     return result, summary
 
 
@@ -356,7 +424,7 @@ def build_quant_payload(max_symbols: int = 0) -> tuple[dict, list[dict]]:
         raise RuntimeError(f"fresh_universe_too_small:{len(rows)}<{required}")
     scored = _score(rows)
     breadth, regime = _breadth(scored, benchmark)
-    portfolio, portfolio_summary = _portfolio(scored)
+    portfolio, portfolio_summary = _portfolio(scored, regime["state"])
     anomalies = [{"symbol": row["symbol"], "activity_score": _finite(max(abs(row["price_z20"] or 0), abs(row["volume_z20"] or 0)) * 20), "reason": "Unusual price/volume deviation", "factors": {"price": row["price_z20"], "volume": row["volume_z20"]}} for row in scored if max(abs(row["price_z20"] or 0), abs(row["volume_z20"] or 0)) >= 2.5]
     generated = datetime.now(timezone.utc).isoformat()
     seed = f"{completed_session.date().isoformat()}|{len(scored)}|{regime['state']}"
@@ -366,7 +434,7 @@ def build_quant_payload(max_symbols: int = 0) -> tuple[dict, list[dict]]:
         "version": "5.0.0", "engine": "Bursa MusangKing Quant v5", "run_id": run_id,
         "scan_date": completed_session.date().isoformat(), "generated_at": generated, "market": "MYX", "benchmark": "^KLSE",
         "universe_size": len(universe), "fresh_symbols": len(scored), "regime": regime, "breadth": breadth,
-        "stocks": scored[:300], "portfolio": portfolio, "portfolio_summary": portfolio_summary,
+        "stocks": scored, "portfolio": portfolio, "portfolio_summary": portfolio_summary,
         "research": research[:120], "abnormal_activity": sorted(anomalies, key=lambda row: row["activity_score"], reverse=True)[:100],
         "backtest": _backtest(scored, prices),
         "performance": {"live_trades": 0, "open_trades": 0, "closed_trades": 0, "hit_rate": 0, "realized_return": 0, "equity_curve": []},

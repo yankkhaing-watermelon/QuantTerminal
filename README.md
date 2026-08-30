@@ -22,6 +22,15 @@ A Cloudflare-native quantitative research terminal for the full Bursa Malaysia u
 | 14 | Neutral Unexplained Activity monitor |
 | 15 | Fail-closed publication, deterministic integrity checks and CI |
 
+### Step 10 portfolio safeguards
+
+- Regime exposure caps: 100% Strong Risk-On, 85% Risk-On, 70% Neutral, 45% Risk-Off and 25% Strong Risk-Off.
+- Maximum target weight of 15% per security.
+- Expected-edge, volatility and decision-aware allocation.
+- Three-ATR stop validation, target/position parity and per-position risk-contribution reconciliation.
+- Portfolio beta, cash reserve, effective positions and diversification are independently recalculated before publication.
+- `Validate Portfolio Risk and Position Sizing` checks the current live payload without modifying D1.
+
 ## Reliability rules
 
 - Trading inputs and `^KLSE` use `auto_adjust=False`; adjusted and raw histories are never mixed.

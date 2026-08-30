@@ -1,0 +1,29 @@
+name: Validate Portfolio Risk and Position Sizing
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install requests
+      - name: Fetch current production payload
+        env:
+          QUANT_API_BASE: ${{ secrets.QUANT_API_BASE }}
+        run: python scripts/validate_published.py --output artifacts/published
+      - name: Validate portfolio risk and position sizing
+        run: python scripts/validate_portfolio_risk.py --artifacts artifacts/published --require-portfolio
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: portfolio-risk-validation-${{ github.run_id }}
+          path: artifacts/published
+          retention-days: 14
