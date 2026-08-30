@@ -22,6 +22,7 @@ ACTIVITY_METHODOLOGY = {
     },
     "trigger": "Flag when any factor is at least 3.0 sigma from its own history, or when at least two factors are each at least 2.0 sigma.",
     "score_range": [0, 100],
+    "direction": "Positive or negative describes the sign of the dominant price-return or relative-strength deviation; it is not a trade signal.",
     "interpretation": "Descriptive deviation monitor only; a high score is not a directional trade signal and does not establish a cause.",
     "exclusions": [
         "No event-study database.",
@@ -110,6 +111,19 @@ def _activity_level(score: float) -> str:
     return "ELEVATED"
 
 
+def activity_direction(factors: Mapping[str, float | int | None]) -> str:
+    """Classify the sign of the strongest directional market-behaviour factor."""
+    directional = [
+        float(value)
+        for key in ("price_return", "relative_strength")
+        if (value := factors.get(key)) is not None and math.isfinite(float(value))
+    ]
+    if not directional:
+        return "POSITIVE"
+    dominant = max(directional, key=abs)
+    return "POSITIVE" if dominant >= 0 else "NEGATIVE"
+
+
 def _reason(factors: Mapping[str, float | int | None]) -> str:
     labels = {
         "price_return": "price-return",
@@ -162,6 +176,7 @@ def build_unexplained_activity(
             "sector": stock.get("sector"),
             "activity_score": score,
             "activity_level": _activity_level(score),
+            "direction": activity_direction(factors),
             "reason": _reason(factors),
             "factors": factors,
             "observation_date": pd.Timestamp(frame.index[-1]).date().isoformat(),
