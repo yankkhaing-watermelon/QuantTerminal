@@ -62,6 +62,19 @@ nav button{padding:9px 14px}.page-title{margin-bottom:10px}.page-title h2{font-s
 @media(max-width:620px){.brand h1{font-size:12px}.brand span{font-size:6px}.run-button{font-size:10px}.date-pill{font-size:8px}.public-notice{font-size:8px}nav button strong{font-size:7.5px}.page-title h2{font-size:22px}.updated span{font-size:8px}.updated b{font-size:9px}.panel-head h3{font-size:14px}.eyebrow{font-size:9px}.metric span{font-size:9px}.metric strong{font-size:21px}.metric small{font-size:10px}.regime-hero p{font-size:11px}.meter-row>div:first-child{font-size:11px}.ranking-switch button{font-size:10px}.ranking-hero h3{font-size:18px}.ranking-hero p{font-size:9px}.ranking-controls input,.ranking-controls select{font-size:12px}.ranking-row{grid-template-columns:32px minmax(82px,1fr) 41px 41px 58px 8px}.ranking-name strong{font-size:15px}.ranking-name span{font-size:10px}.ranking-factor small{font-size:7px}.ranking-factor b{font-size:13px}.ranking-score{font-size:16px}.activity-list article{grid-template-columns:27px minmax(0,1fr) 68px;gap:6px}.activity-rank{font-size:9px}.activity-list article>div:first-of-type span{font-size:10px}.activity-list article>div:first-of-type small{font-size:9px}.activity-factors{grid-column:1/-1}.activity-filters{display:grid;grid-template-columns:1fr 1fr}.activity-filters input{grid-column:1/-1;min-width:0}.activity-filters select{width:100%;min-width:0}.disclaimer{font-size:9px}}
 
 /* Preserve the preferred legacy layout with current header and name hierarchy. */
+.brand-mark-orange{
+  width:40px;height:40px;flex:0 0 40px;display:grid;place-items:center;border-radius:5px;
+  background:#fb8b1e!important;color:#000000!important;font-size:12px;font-weight:950;
+  border:0!important;outline:0!important;box-shadow:none!important;background-image:none!important
+}
+.run-button-orange{
+  min-width:88px;min-height:40px;display:inline-flex;align-items:center;justify-content:center;gap:8px;
+  padding:0 14px;border-radius:5px;background:#fb8b1e!important;color:#000000!important;
+  border:0!important;outline:0!important;box-shadow:none!important;background-image:none!important;
+  font-size:12px;font-weight:900;text-decoration:none
+}
+.run-button-orange span{font-size:13px}
+.brand-mark-orange:focus,.brand-mark-orange:focus-visible,.run-button-orange:focus,.run-button-orange:focus-visible{border:0!important;outline:0!important;box-shadow:none!important}
 .brand-mark,.run-button,.run-button:hover,.run-button:active,.run-button:visited{
   background:#fb8b1e!important;
   background-image:none!important;
@@ -83,6 +96,9 @@ nav button{padding:9px 14px}.page-title{margin-bottom:10px}.page-title h2{font-s
 .research-identity strong{max-width:250px}
 .research-identity>span{flex:0 1 auto;max-width:42%;text-align:right}
 @media(max-width:620px){
+  .brand-mark-orange{width:31px;height:33px;flex-basis:31px;border-radius:4px;font-size:9px}
+  .run-button-orange{min-width:54px;min-height:33px;padding:0 7px;border-radius:4px;font-size:10px}
+  .run-button-orange span{font-size:9px}
   .position-head h4,.research-identity h4{font-size:9px}
   .position-head h4+span,.research-identity strong{font-size:14px}
   .position-head h4+span{max-width:205px}
