@@ -299,24 +299,66 @@ def _breadth(scored: list[dict], benchmark: pd.Series) -> tuple[dict, dict]:
     return breadth, {"state": state, "score": _finite(score), "confidence": _finite(min(95, 55 + abs(score - 50))), "components": components, "summary": "KLCI trend, Bursa breadth, sector breadth, volume, volatility and participation."}
 
 
-def _backtest(scored: list[dict], prices: dict[str, pd.DataFrame]) -> dict:
+def _backtest(metadata: dict[str, Security], prices: dict[str, pd.DataFrame], benchmark: pd.Series) -> dict:
+    group_labels = ["Q1", "Q2", "Q3", "Q4", "Q5", "Q6"]
+    empty = {
+        "total_trades": 0, "win_rate": 0, "expectancy": 0, "max_drawdown": 0,
+        "groups": [], "cohorts": [],
+        "methodology": {
+            "grouping": "cross_sectional_quant_score_sextiles_by_period",
+            "group_order": "Q1 lowest Quant Score; Q6 highest Quant Score",
+            "minimum_signal_history_sessions": 200,
+            "forward_horizon_sessions": 20,
+            "drawdown": "equal_weight_period_cohort",
+            "universe_basis": "current_fresh_universe",
+            "transaction_costs_bps": 0,
+        },
+    }
     records = []
-    for row in scored:
-        frame = prices.get(row["symbol"])
-        if frame is None or len(frame) < 140:
+    for lag in (80, 60, 40, 20):
+        signal_date = benchmark.index[-lag - 1]
+        benchmark_asof = benchmark.loc[:signal_date]
+        historical_rows = []
+        forward_returns: dict[str, float] = {}
+        for symbol, security in metadata.items():
+            price_frame = prices.get(symbol)
+            if price_frame is None:
+                continue
+            history = price_frame.loc[price_frame.index <= signal_date]
+            future = price_frame.loc[price_frame.index > signal_date].head(20)
+            if len(history) < 200 or len(future) < 20:
+                continue
+            row = _features(security, history, benchmark_asof, signal_date)
+            if row is None:
+                continue
+            forward = float(future.Close.iloc[-1] / history.Close.iloc[-1] - 1)
+            if math.isfinite(forward):
+                historical_rows.append(row)
+                forward_returns[symbol] = forward
+        if len(historical_rows) < len(group_labels):
             continue
-        close = frame.Close.astype(float)
-        for lag in (80, 60, 40, 20):
-            momentum = close.iloc[-lag - 1] / close.iloc[-lag - 61] - 1
-            forward = close.iloc[-lag + 19] / close.iloc[-lag - 1] - 1 if lag >= 20 else np.nan
-            if math.isfinite(momentum) and math.isfinite(forward):
-                records.append({"momentum": momentum, "forward": forward, "period": lag})
+        for row in _score(historical_rows):
+            forward = forward_returns.get(row["symbol"])
+            if forward is not None:
+                records.append({"quant_score": row["quant_score"], "forward": forward, "period": lag})
     if not records:
-        return {"total_trades": 0, "win_rate": 0, "expectancy": 0, "max_drawdown": 0, "groups": []}
+        return empty
     frame = pd.DataFrame(records)
-    frame["group"] = pd.qcut(frame.momentum.rank(method="first"), 6, labels=["Q1", "Q2", "Q3", "Q4", "Q5", "Q6"])
+    frame["group"] = None
+    valid_indices: list[int] = []
+    for _, cohort in frame.groupby("period"):
+        if len(cohort) < len(group_labels):
+            continue
+        frame.loc[cohort.index, "group"] = pd.qcut(
+            cohort.quant_score.rank(method="first"), len(group_labels), labels=group_labels,
+        ).astype(str)
+        valid_indices.extend(cohort.index.tolist())
+    frame = frame.loc[valid_indices]
+    if frame.empty:
+        return empty
     groups = []
-    for name, group in frame.groupby("group", observed=True):
+    for name in group_labels:
+        group = frame[frame.group == name]
         wins = group.forward[group.forward > 0]
         losses = group.forward[group.forward <= 0]
         profit_factor = wins.sum() / max(abs(losses.sum()), 1e-9)
@@ -325,11 +367,31 @@ def _backtest(scored: list[dict], prices: dict[str, pd.DataFrame]) -> dict:
     # stock return in row order treats simultaneous signals as sequential
     # trades and can manufacture a near -100% drawdown. Use the equal-weight
     # cohort return for each period to form a chronological equity curve.
-    cohort_returns = frame.groupby("period").forward.mean().sort_index(ascending=False).clip(lower=-0.999)
-    equity = (1 + cohort_returns).cumprod().reset_index(drop=True)
-    equity = pd.concat([pd.Series([1.0]), equity], ignore_index=True)
-    drawdown = equity / equity.cummax() - 1
-    return {"total_trades": len(frame), "win_rate": _finite((frame.forward > 0).mean() * 100), "expectancy": _finite(frame.forward.mean() * 100), "max_drawdown": _finite(drawdown.min() * 100), "groups": groups}
+    cohorts = []
+    equity = 1.0
+    peak = 1.0
+    for period, cohort in sorted(frame.groupby("period"), key=lambda item: item[0], reverse=True):
+        cohort_return = max(-0.999, float(cohort.forward.mean()))
+        equity *= 1 + cohort_return
+        peak = max(peak, equity)
+        drawdown = equity / peak - 1
+        cohorts.append({
+            "lag_sessions": int(period),
+            "observations": len(cohort),
+            "wins": int((cohort.forward > 0).sum()),
+            "return_pct": _finite(cohort_return * 100),
+            "equity": _finite(equity, 8),
+            "drawdown_pct": _finite(drawdown * 100),
+        })
+    return {
+        "total_trades": len(frame),
+        "win_rate": _finite((frame.forward > 0).mean() * 100),
+        "expectancy": _finite(frame.forward.mean() * 100),
+        "max_drawdown": _finite(min(row["drawdown_pct"] for row in cohorts)),
+        "groups": groups,
+        "cohorts": cohorts,
+        "methodology": empty["methodology"],
+    }
 
 
 REGIME_EXPOSURE_CAP = {
@@ -442,7 +504,7 @@ def build_quant_payload(max_symbols: int = 0) -> tuple[dict, list[dict]]:
         "universe_size": len(universe), "fresh_symbols": len(scored), "regime": regime, "breadth": breadth,
         "stocks": scored, "portfolio": portfolio, "portfolio_summary": portfolio_summary,
         "research": research[:120], "abnormal_activity": sorted(anomalies, key=lambda row: row["activity_score"], reverse=True)[:100],
-        "backtest": _backtest(scored, prices),
+        "backtest": _backtest(metadata, prices, benchmark),
         "performance": {"live_trades": 0, "open_trades": 0, "closed_trades": 0, "hit_rate": 0, "realized_return": 0, "equity_curve": []},
         "methodology": {"price_adjustment": "unadjusted", "session_gate": completed_session.date().isoformat(), "stale_symbols_excluded": len(prices) - len(rows)},
     }

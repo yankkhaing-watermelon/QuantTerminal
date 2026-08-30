@@ -8,6 +8,7 @@ import pandas as pd
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "quant"))
 
 from bmk_quant.engine import _backtest, _percentile, _portfolio, _rsi  # noqa: E402
+from bmk_quant.universe import Security  # noqa: E402
 
 
 class EngineTests(unittest.TestCase):
@@ -43,21 +44,31 @@ class EngineTests(unittest.TestCase):
         self.assertEqual(summary["capital_deployed"], 0.0)
 
     def test_backtest_drawdown_uses_period_cohorts(self):
-        dates = pd.date_range("2025-01-01", periods=180, freq="B")
+        dates = pd.date_range("2025-01-01", periods=320, freq="B")
         prices = {}
-        scored = []
+        metadata = {}
         for index in range(6):
             symbol = f"S{index}"
-            close = pd.Series([100 * (0.995 ** day) * (1 + index * 0.001) for day in range(180)], index=dates)
-            prices[symbol] = pd.DataFrame({"Close": close})
-            scored.append({"symbol": symbol})
+            close = pd.Series([100 * (0.995 ** day) * (1 + index * 0.01) for day in range(320)], index=dates)
+            prices[symbol] = pd.DataFrame({
+                "Close": close,
+                "High": close * 1.01,
+                "Low": close * 0.99,
+                "Volume": 1_000_000 + index * 100_000,
+            })
+            metadata[symbol] = Security(symbol, symbol, "Test", 1_000_000 + index)
+        benchmark = pd.Series([100 * (0.999 ** day) for day in range(320)], index=dates)
 
-        result = _backtest(scored, prices)
+        result = _backtest(metadata, prices, benchmark)
 
         self.assertEqual(result["total_trades"], 24)
         self.assertLess(result["max_drawdown"], 0)
         self.assertGreater(result["max_drawdown"], -100)
         self.assertEqual([group["name"] for group in result["groups"]], ["Q1", "Q2", "Q3", "Q4", "Q5", "Q6"])
+        self.assertEqual([cohort["lag_sessions"] for cohort in result["cohorts"]], [80, 60, 40, 20])
+        self.assertEqual(sum(cohort["observations"] for cohort in result["cohorts"]), result["total_trades"])
+        self.assertEqual(result["methodology"]["forward_horizon_sessions"], 20)
+        self.assertEqual(result["methodology"]["grouping"], "cross_sectional_quant_score_sextiles_by_period")
 
 
 if __name__ == "__main__":

@@ -1,4 +1,4 @@
-name: Validate Published Quant Payload
+name: Validate Walk-Forward Backtest
 
 on:
   workflow_dispatch:
@@ -19,13 +19,11 @@ jobs:
         env:
           QUANT_API_BASE: ${{ secrets.QUANT_API_BASE }}
         run: python scripts/validate_published.py --output artifacts/published
-      - name: Validate rankings and portfolio
-        run: python scripts/validate_rankings.py --artifacts artifacts/published
-      - name: Validate walk-forward backtest
+      - name: Validate walk-forward groups and cohort path
         run: python scripts/validate_backtest.py --artifacts artifacts/published
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: published-payload-validation-${{ github.run_id }}
+          name: backtest-validation-${{ github.run_id }}
           path: artifacts/published
           retention-days: 14

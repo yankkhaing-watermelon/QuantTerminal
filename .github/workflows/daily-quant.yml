@@ -37,6 +37,8 @@ jobs:
         run: python scripts/validate_rankings.py --artifacts artifacts/latest
       - name: Validate portfolio risk and position sizing
         run: python scripts/validate_portfolio_risk.py --artifacts artifacts/latest
+      - name: Validate walk-forward backtest
+        run: python scripts/validate_backtest.py --artifacts artifacts/latest
       - name: Publish research archive and terminal payload
         env:
           QUANT_API_BASE: ${{ secrets.QUANT_API_BASE }}

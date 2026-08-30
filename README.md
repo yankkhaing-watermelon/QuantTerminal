@@ -31,6 +31,16 @@ A Cloudflare-native quantitative research terminal for the full Bursa Malaysia u
 - Portfolio beta, cash reserve, effective positions and diversification are independently recalculated before publication.
 - `Validate Portfolio Risk and Position Sizing` checks the current live payload without modifying D1.
 
+### Step 12 walk-forward safeguards
+
+- The complete historical Quant Score is reconstructed using only data available at each signal date and ranked independently into six cross-sectional groups.
+- Q1 is the lowest-score sextile and Q6 is the highest; labels are explicit in the payload and dashboard.
+- Forward outcomes use a fixed 20-session horizon with no future data in the signal window.
+- Drawdown compounds equal-weight cohort returns rather than treating simultaneous stock signals as sequential trades.
+- Observation counts, wins, cohort returns, equity, drawdown and group totals are independently reconciled before publication.
+- The payload discloses that this is a current-universe diagnostic with zero transaction costs, not a survivorship-free profitability claim.
+- `Validate Walk-Forward Backtest` checks the current published payload without modifying D1.
+
 ## Reliability rules
 
 - Trading inputs and `^KLSE` use `auto_adjust=False`; adjusted and raw histories are never mixed.
