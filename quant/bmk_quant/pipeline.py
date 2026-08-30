@@ -60,10 +60,14 @@ def build_quant_payload(max_symbols: int = 0) -> tuple[dict, list[dict]]:
     ]
 
     level_counts = {"VERY HIGH": 0, "HIGH": 0, "ELEVATED": 0}
+    direction_counts = {"POSITIVE": 0, "NEGATIVE": 0}
     for row in unexplained_activity:
         level = row.get("activity_level")
         if level in level_counts:
             level_counts[level] += 1
+        direction = row.get("direction")
+        if direction in direction_counts:
+            direction_counts[direction] += 1
 
     methodology = {
         "price_adjustment": "unadjusted",
@@ -96,6 +100,8 @@ def build_quant_payload(max_symbols: int = 0) -> tuple[dict, list[dict]]:
             "very_high": level_counts["VERY HIGH"],
             "high": level_counts["HIGH"],
             "elevated": level_counts["ELEVATED"],
+            "positive": direction_counts["POSITIVE"],
+            "negative": direction_counts["NEGATIVE"],
             "max_score": max((row["activity_score"] for row in unexplained_activity), default=0),
         },
         "backtest": engine._backtest(metadata, prices, benchmark),
