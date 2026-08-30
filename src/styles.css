@@ -124,3 +124,31 @@ nav{background:#000000;border-color:rgba(0,104,255,.34)}nav button{color:rgba(74
 .up{color:#4af6c3!important}.down{color:#ff433d!important}.flat{color:#fb8b1e!important}
 footer{border-color:rgba(0,104,255,.34);background:#000000;color:rgba(74,246,195,.56)}
 @media(max-width:620px){nav{background:rgba(0,0,0,.98);border-top-color:#0068ff}.brand-mark,.run-button{box-shadow:none}.panel,.metric-grid,.regime-hero,.ranking-switch,.ranking-hero{border-radius:3px}}
+
+/* Screenshot review corrections */
+.brand-mark,.run-button,.run-button:hover,.run-button:active,.run-button:visited{
+  background-color:#fb8b1e!important;
+  background-image:none!important;
+  border-color:#fb8b1e!important;
+  color:#000000!important;
+  filter:none!important;
+  mix-blend-mode:normal;
+  opacity:1;
+  -webkit-print-color-adjust:exact;
+  print-color-adjust:exact;
+  forced-color-adjust:none
+}
+.position{background:#000000}
+.position-head{align-items:flex-start;gap:12px}
+.position-head>div{min-width:0}
+.position-head h4{margin:0;color:#4af6c3;font-size:17px}
+.position-head h4+span{display:block;max-width:220px;margin-top:4px;color:rgba(74,246,195,.56);font-size:10px;line-height:1.3;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.backtest-grid,.research-grid{background:rgba(0,104,255,.22)!important}
+.backtest-grid article,.research-grid article{background:#000000!important}
+.backtest-grid article+article,.research-grid article+article{border-color:rgba(0,104,255,.22)}
+@media(max-width:620px){
+  .position-head h4+span{max-width:190px;font-size:11px}
+  .backtest-grid,.research-grid{background:#000000!important;gap:0}
+  .backtest-grid article,.research-grid article{border-bottom:1px solid rgba(0,104,255,.22)}
+  .backtest-grid article:last-child,.research-grid article:last-child{border-bottom:0}
+}
