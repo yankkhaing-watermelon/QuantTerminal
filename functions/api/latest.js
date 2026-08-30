@@ -4,6 +4,7 @@ const json = (body, status = 200) => new Response(JSON.stringify(body), {
   status,
   headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" },
 });
+const PRODUCTION_LATEST_URL = "https://bursamusangking-quant-terminal.pages.dev/api/latest";
 
 function getDb(env) {
   if (!env.DB) throw new Error("D1 binding DB is not configured");
@@ -15,8 +16,12 @@ async function columns(db) {
   return new Set((result.results || []).map((row) => String(row.name)));
 }
 
-export async function onRequestGet({ env }) {
+export async function onRequestGet({ env, request }) {
   try {
+    const requestUrl = new URL(request.url);
+    if (!env.DB && requestUrl.hostname !== "bursamusangking-quant-terminal.pages.dev") {
+      return fetch(PRODUCTION_LATEST_URL, { headers: { accept: "application/json" } });
+    }
     const db = getDb(env);
     const table = await db.prepare("SELECT type FROM sqlite_master WHERE name='quant_runs' LIMIT 1").first();
     if (!table?.type) return json({ ok: true, data: null, state: "awaiting_first_publication" });

@@ -4,6 +4,7 @@ const json = (body, status = 200, headers = {}) => new Response(JSON.stringify(b
 });
 
 const encoder = new TextEncoder();
+const PRODUCTION_API_BASE = "https://bursamusangking-quant-terminal.pages.dev";
 
 async function sha256(value) {
   const bytes = await crypto.subtle.digest("SHA-256", encoder.encode(value));
@@ -132,6 +133,11 @@ async function latest(db) {
 }
 
 async function handleRead(path, url, env) {
+  // Cloudflare branch previews do not inherit the production D1 binding.
+  // Proxy only the public latest read so visual reviews use real published data.
+  if (!env.DB && path === "/api/latest" && url.hostname !== "bursamusangking-quant-terminal.pages.dev") {
+    return fetch(`${PRODUCTION_API_BASE}/api/latest`, { headers: { accept: "application/json" } });
+  }
   const db = getDb(env);
 
   if (path === "/api/health") {

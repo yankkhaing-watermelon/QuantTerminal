@@ -8,6 +8,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "quant"))
 
 from bmk_quant.activity import (  # noqa: E402
     ACTIVITY_METHODOLOGY,
+    activity_direction,
     activity_score,
     build_unexplained_activity,
     latest_prior_zscore,
@@ -32,6 +33,10 @@ class ActivityMonitorTests(unittest.TestCase):
         multi = activity_score({"price_return": 3.0, "volume": 2.5, "turnover": 2.2, "relative_strength": 2.0})
         self.assertGreater(multi, single)
         self.assertLessEqual(multi, 100.0)
+
+    def test_direction_uses_the_strongest_directional_deviation(self):
+        self.assertEqual(activity_direction({"price_return": 3.5, "relative_strength": 2.0, "volume": 8.0}), "POSITIVE")
+        self.assertEqual(activity_direction({"price_return": 1.5, "relative_strength": -4.0, "turnover": 9.0}), "NEGATIVE")
 
     def test_four_factor_monitor_flags_spike_and_keeps_neutral_reason(self):
         dates = pd.date_range("2026-05-01", periods=50, freq="B")
@@ -60,6 +65,7 @@ class ActivityMonitorTests(unittest.TestCase):
         row = rows[0]
         self.assertEqual(set(row["factors"]), {"price_return", "volume", "turnover", "relative_strength"})
         self.assertGreaterEqual(row["activity_score"], 70)
+        self.assertEqual(row["direction"], "POSITIVE")
         self.assertNotIn("insider", row["reason"].lower())
         self.assertNotIn("leak", row["reason"].lower())
         self.assertNotIn("announcement", row["reason"].lower())
