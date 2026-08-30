@@ -54,9 +54,9 @@ def latest_prior_zscore(series: pd.Series, window: int = ACTIVITY_BASELINE_SESSI
     std = float(reference.std(ddof=1))
     if not math.isfinite(std) or std <= 1e-12:
         # A completely flat baseline followed by a genuine change is still a
-        # deviation. Scale by 5% of the baseline magnitude (or 1 for a zero
-        # baseline) rather than dividing by an effectively zero variance.
-        floor = max(abs(mean) * 0.05, 1.0)
+        # deviation. Use a small relative/absolute scale floor rather than an
+        # effectively zero denominator. The final z-score is clipped below.
+        floor = max(abs(mean) * 0.05, 1e-6)
         z = (current - mean) / floor
     else:
         z = (current - mean) / std
