@@ -49,15 +49,10 @@ async function addMissingColumns(db, table, definitions) {
 }
 
 async function ensureSchema(db) {
-  // Create missing tables first. The existing D1 database may contain an older
-  // Quant Terminal schema, so CREATE TABLE IF NOT EXISTS alone is not enough:
-  // it does not add columns to an already-existing table.
-  await db.batch([
-    db.prepare("CREATE TABLE IF NOT EXISTS quant_runs (run_id TEXT PRIMARY KEY, scan_date TEXT NOT NULL DEFAULT '', generated_at TEXT NOT NULL DEFAULT '', payload_hash TEXT NOT NULL DEFAULT '', payload_json TEXT NOT NULL DEFAULT '{}', created_at TEXT NOT NULL DEFAULT '')"),
-    db.prepare("CREATE TABLE IF NOT EXISTS research_archives (run_id TEXT PRIMARY KEY, status TEXT NOT NULL DEFAULT 'started', expected_symbols INTEGER NOT NULL DEFAULT 0, received_symbols INTEGER NOT NULL DEFAULT 0, payload_hash TEXT, updated_at TEXT NOT NULL DEFAULT '')"),
-    db.prepare("CREATE TABLE IF NOT EXISTS research_rows (run_id TEXT NOT NULL, symbol TEXT NOT NULL, row_json TEXT NOT NULL DEFAULT '{}', PRIMARY KEY (run_id, symbol))"),
-    db.prepare("CREATE TABLE IF NOT EXISTS portfolio_rows (run_id TEXT NOT NULL, symbol TEXT NOT NULL, row_hash TEXT NOT NULL DEFAULT '', row_json TEXT NOT NULL DEFAULT '{}', PRIMARY KEY (run_id, symbol))"),
-  ]);
+  await db.prepare("CREATE TABLE IF NOT EXISTS quant_runs (run_id TEXT PRIMARY KEY, scan_date TEXT NOT NULL DEFAULT '', generated_at TEXT NOT NULL DEFAULT '', payload_hash TEXT NOT NULL DEFAULT '', payload_json TEXT NOT NULL DEFAULT '{}', created_at TEXT NOT NULL DEFAULT '')").run();
+  await db.prepare("CREATE TABLE IF NOT EXISTS research_archives (run_id TEXT PRIMARY KEY, status TEXT NOT NULL DEFAULT 'started', expected_symbols INTEGER NOT NULL DEFAULT 0, received_symbols INTEGER NOT NULL DEFAULT 0, payload_hash TEXT, updated_at TEXT NOT NULL DEFAULT '')").run();
+  await db.prepare("CREATE TABLE IF NOT EXISTS research_rows (run_id TEXT NOT NULL, symbol TEXT NOT NULL, row_json TEXT NOT NULL DEFAULT '{}', PRIMARY KEY (run_id, symbol))").run();
+  await db.prepare("CREATE TABLE IF NOT EXISTS portfolio_rows (run_id TEXT NOT NULL, symbol TEXT NOT NULL, row_hash TEXT NOT NULL DEFAULT '', row_json TEXT NOT NULL DEFAULT '{}', PRIMARY KEY (run_id, symbol))").run();
 
   const quantColumns = await addMissingColumns(db, "quant_runs", [
     ["scan_date", "TEXT NOT NULL DEFAULT ''"],
@@ -67,8 +62,6 @@ async function ensureSchema(db) {
     ["created_at", "TEXT NOT NULL DEFAULT ''"],
   ]);
 
-  // Preserve useful date/time data from common legacy column names when the
-  // new canonical columns were just added.
   if (quantColumns.has("date")) {
     await db.prepare("UPDATE quant_runs SET scan_date = date WHERE (scan_date IS NULL OR scan_date = '') AND date IS NOT NULL").run();
   } else if (quantColumns.has("run_date")) {
@@ -88,20 +81,19 @@ async function ensureSchema(db) {
     ["payload_hash", "TEXT"],
     ["updated_at", "TEXT NOT NULL DEFAULT ''"],
   ]);
-  await addMissingColumns(db, "research_rows", [
-    ["row_json", "TEXT NOT NULL DEFAULT '{}'"],
-  ]);
-  await addMissingColumns(db, "portfolio_rows", [
-    ["row_hash", "TEXT NOT NULL DEFAULT ''"],
-    ["row_json", "TEXT NOT NULL DEFAULT '{}'"],
-  ]);
+  await addMissingColumns(db, "research_rows", [["row_json", "TEXT NOT NULL DEFAULT '{}'" ]]);
+  await addMissingColumns(db, "portfolio_rows", [["row_hash", "TEXT NOT NULL DEFAULT ''"], ["row_json", "TEXT NOT NULL DEFAULT '{}'" ]]);
 
-  // Only create indexes after their required columns have been confirmed.
-  await db.batch([
-    db.prepare("CREATE INDEX IF NOT EXISTS idx_quant_runs_date ON quant_runs(scan_date DESC, generated_at DESC)"),
-    db.prepare("CREATE INDEX IF NOT EXISTS idx_research_rows_run ON research_rows(run_id)"),
-    db.prepare("CREATE INDEX IF NOT EXISTS idx_portfolio_rows_run ON portfolio_rows(run_id)"),
-  ]);
+  const finalQuantColumns = await tableColumns(db, "quant_runs");
+  if (finalQuantColumns.has("scan_date") && finalQuantColumns.has("generated_at")) {
+    await db.prepare("CREATE INDEX IF NOT EXISTS idx_quant_runs_date ON quant_runs(scan_date DESC, generated_at DESC)").run();
+  }
+  if ((await tableColumns(db, "research_rows")).has("run_id")) {
+    await db.prepare("CREATE INDEX IF NOT EXISTS idx_research_rows_run ON research_rows(run_id)").run();
+  }
+  if ((await tableColumns(db, "portfolio_rows")).has("run_id")) {
+    await db.prepare("CREATE INDEX IF NOT EXISTS idx_portfolio_rows_run ON portfolio_rows(run_id)").run();
+  }
 }
 
 function getDb(env) {
@@ -114,24 +106,41 @@ async function bodyJson(request) {
 }
 
 async function latest(db) {
-  const row = await db.prepare("SELECT payload_json FROM quant_runs ORDER BY scan_date DESC, generated_at DESC LIMIT 1").first();
-  return row ? JSON.parse(row.payload_json) : null;
+  const columns = await tableColumns(db, "quant_runs");
+  if (!columns.has("payload_json")) return null;
+  const order = columns.has("scan_date") && columns.has("generated_at")
+    ? "scan_date DESC, generated_at DESC"
+    : columns.has("created_at") ? "created_at DESC" : "rowid DESC";
+  const row = await db.prepare(`SELECT payload_json FROM quant_runs ORDER BY ${order} LIMIT 1`).first();
+  return row?.payload_json ? JSON.parse(row.payload_json) : null;
 }
 
 async function handleRead(path, url, env) {
   const db = getDb(env);
-  await ensureSchema(db);
+
+  // Keep health independent from the legacy schema so it can diagnose a bad
+  // migration instead of failing on scan_date before reporting service health.
   if (path === "/api/health") {
-    const count = await db.prepare("SELECT COUNT(*) AS count FROM quant_runs").first();
-    return json({ ok: true, service: "bursa-musangking-quant-terminal", version: "5.0.0", runs: Number(count?.count || 0) });
+    const table = await db.prepare("SELECT type FROM sqlite_master WHERE name='quant_runs' LIMIT 1").first();
+    let columns = [];
+    if (table?.type) {
+      const result = await db.prepare("PRAGMA table_info(quant_runs)").all();
+      columns = (result.results || []).map((row) => String(row.name));
+    }
+    return json({ ok: true, service: "bursa-musangking-quant-terminal", version: "5.0.1", db_bound: true, quant_runs_type: table?.type || null, quant_runs_columns: columns });
   }
+
+  await ensureSchema(db);
   if (path === "/api/latest") {
     const payload = await latest(db);
     return payload ? json({ ok: true, data: payload }) : json({ ok: true, data: null, state: "awaiting_first_publication" });
   }
   if (path === "/api/history") {
+    const columns = await tableColumns(db, "quant_runs");
+    const order = columns.has("scan_date") && columns.has("generated_at") ? "scan_date DESC, generated_at DESC" : "rowid DESC";
+    const select = ["run_id", ...(columns.has("scan_date") ? ["scan_date"] : []), ...(columns.has("generated_at") ? ["generated_at"] : []), ...(columns.has("payload_hash") ? ["payload_hash"] : [])].join(", ");
     const limit = Math.min(180, Math.max(1, Number(url.searchParams.get("limit") || 60)));
-    const result = await db.prepare("SELECT run_id, scan_date, generated_at, payload_hash FROM quant_runs ORDER BY scan_date DESC, generated_at DESC LIMIT ?").bind(limit).all();
+    const result = await db.prepare(`SELECT ${select} FROM quant_runs ORDER BY ${order} LIMIT ?`).bind(limit).all();
     return json({ ok: true, data: result.results || [] });
   }
   const research = path.match(/^\/api\/research\/([^/]+)$/);
@@ -174,8 +183,7 @@ async function handleWrite(request, path, env) {
     const runId = decodeURIComponent(batch[1]);
     const rows = Array.isArray(payload.rows) ? payload.rows : [];
     if (rows.length > 100) return json({ ok: false, error: "batch_too_large:max_100" }, 422);
-    const statements = rows.map((row) => db.prepare("INSERT INTO research_rows(run_id,symbol,row_json) VALUES(?,?,?) ON CONFLICT(run_id,symbol) DO UPDATE SET row_json=excluded.row_json")
-      .bind(runId, String(row.symbol || ""), JSON.stringify(row)));
+    const statements = rows.map((row) => db.prepare("INSERT INTO research_rows(run_id,symbol,row_json) VALUES(?,?,?) ON CONFLICT(run_id,symbol) DO UPDATE SET row_json=excluded.row_json").bind(runId, String(row.symbol || ""), JSON.stringify(row)));
     if (statements.length) await db.batch(statements);
     const count = await db.prepare("SELECT COUNT(*) AS count FROM research_rows WHERE run_id=?").bind(runId).first();
     await db.prepare("UPDATE research_archives SET received_symbols=?, updated_at=datetime('now') WHERE run_id=?").bind(Number(count?.count || 0), runId).run();
@@ -204,8 +212,7 @@ async function handleWrite(request, path, env) {
       delete row.row_hash;
       const computed = await sha256(stable(row));
       if (claimed && claimed !== computed) return json({ ok: false, error: `portfolio_row_hash_mismatch:${row.symbol || "unknown"}` }, 422);
-      statements.push(db.prepare("INSERT INTO portfolio_rows(run_id,symbol,row_hash,row_json) VALUES(?,?,?,?) ON CONFLICT(run_id,symbol) DO UPDATE SET row_hash=excluded.row_hash,row_json=excluded.row_json")
-        .bind(runId, String(row.symbol || ""), computed, JSON.stringify({ ...row, row_hash: computed })));
+      statements.push(db.prepare("INSERT INTO portfolio_rows(run_id,symbol,row_hash,row_json) VALUES(?,?,?,?) ON CONFLICT(run_id,symbol) DO UPDATE SET row_hash=excluded.row_hash,row_json=excluded.row_json").bind(runId, String(row.symbol || ""), computed, JSON.stringify({ ...row, row_hash: computed })));
     }
     if (statements.length) await db.batch(statements);
     return json({ ok: true, run_id: runId, received_rows: rows.length });
