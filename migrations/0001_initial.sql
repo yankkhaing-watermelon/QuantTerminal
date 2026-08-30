@@ -17,12 +17,16 @@ CREATE TABLE IF NOT EXISTS research_archives (
   expected_symbols INTEGER NOT NULL DEFAULT 0,
   received_symbols INTEGER NOT NULL DEFAULT 0,
   payload_hash TEXT,
+  manifest_hash TEXT,
+  archived_at TEXT,
+  schema_version INTEGER NOT NULL DEFAULT 2,
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
 CREATE TABLE IF NOT EXISTS research_rows (
   run_id TEXT NOT NULL,
   symbol TEXT NOT NULL,
+  row_hash TEXT NOT NULL DEFAULT '',
   row_json TEXT NOT NULL,
   PRIMARY KEY (run_id, symbol)
 );
