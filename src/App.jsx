@@ -107,7 +107,8 @@ function Performance({ data }) {
 
 function Research({ data }) {
   const rows = data.research || [];
-  return <section className="panel"><div className="panel-head"><div><span className="eyebrow">RESEARCH ARCHIVE</span><h3>Per-stock model evidence</h3></div><Badge>{rows.length} records</Badge></div>{rows.length ? <div className="research-grid">{rows.map((row) => <article key={row.symbol}><div><h4>{row.symbol}</h4><span>{row.sector || "Bursa Malaysia"}</span></div><p>{row.thesis || row.summary || "Quant evidence archived for this run."}</p><dl><dt>Quality</dt><dd>{num(row.quality_score, 0)}</dd><dt>Momentum</dt><dd>{num(row.momentum_score, 0)}</dd><dt>Risk</dt><dd>{num(row.risk_score, 0)}</dd></dl></article>)}</div> : <Empty title="Research archive is empty" text="Evidence rows will be retained by run after the first complete publication."/>}</section>;
+  const companyNames = new Map((data.stocks || []).map((stock) => [String(stock.symbol), stock.name]));
+  return <section className="panel"><div className="panel-head"><div><span className="eyebrow">RESEARCH ARCHIVE</span><h3>Per-stock model evidence</h3></div><Badge>{rows.length} records</Badge></div>{rows.length ? <div className="research-grid">{rows.map((row) => { const companyName = row.name || row.company_name || companyNames.get(String(row.symbol)) || "Bursa Malaysia"; return <article key={row.symbol}><div className="research-identity"><div><h4>{row.symbol}</h4><strong>{companyName}</strong></div><span>{row.sector || "Bursa Malaysia"}</span></div><p>{row.thesis || row.summary || "Quant evidence archived for this run."}</p><dl><dt>Quality</dt><dd>{num(row.quality_score, 0)}</dd><dt>Momentum</dt><dd>{num(row.momentum_score, 0)}</dd><dt>Risk</dt><dd>{num(row.risk_score, 0)}</dd></dl></article>; })}</div> : <Empty title="Research archive is empty" text="Evidence rows will be retained by run after the first complete publication."/>}</section>;
 }
 
 function Activity({ data }) {
