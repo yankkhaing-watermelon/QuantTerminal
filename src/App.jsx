@@ -7,7 +7,7 @@ const NAV_META = {
   Backtest: { label: "Backtest", icon: "◇" }, Performance: { label: "Performance", icon: "∿" },
   Research: { label: "Research", icon: "⌁" },
 };
-const COLORS = { strong: "#38f2b0", positive: "#84e46d", neutral: "#ffcb45", negative: "#ff7b72", muted: "#7f91a8" };
+const COLORS = { strong: "#4af6c3", positive: "#4af6c3", neutral: "#fb8b1e", negative: "#ff433d", muted: "#0068ff" };
 
 const DEMO_DATA = {
   run_id: "demo-preview",
