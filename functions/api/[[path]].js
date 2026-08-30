@@ -54,7 +54,12 @@ async function ensureSchema(db) {
   await db.prepare("CREATE TABLE IF NOT EXISTS research_rows (run_id TEXT NOT NULL, symbol TEXT NOT NULL, row_json TEXT NOT NULL DEFAULT '{}', PRIMARY KEY (run_id, symbol))").run();
   await db.prepare("CREATE TABLE IF NOT EXISTS portfolio_rows (run_id TEXT NOT NULL, symbol TEXT NOT NULL, row_hash TEXT NOT NULL DEFAULT '', row_json TEXT NOT NULL DEFAULT '{}', PRIMARY KEY (run_id, symbol))").run();
 
+  // The connected production D1 has a legacy quant_runs table whose primary
+  // key is named `id` rather than `run_id`. ALTER TABLE cannot add a new
+  // primary key, so add a nullable run_id and enforce uniqueness separately.
+  // Existing legacy rows remain intact; new publications use run_id.
   const quantColumns = await addMissingColumns(db, "quant_runs", [
+    ["run_id", "TEXT"],
     ["scan_date", "TEXT NOT NULL DEFAULT ''"],
     ["generated_at", "TEXT NOT NULL DEFAULT ''"],
     ["payload_hash", "TEXT NOT NULL DEFAULT ''"],
@@ -74,6 +79,12 @@ async function ensureSchema(db) {
     await db.prepare("UPDATE quant_runs SET generated_at = created_at WHERE (generated_at IS NULL OR generated_at = '') AND created_at IS NOT NULL").run();
   }
 
+  // A legacy table may have no run_id constraint. This unique index makes
+  // the UPSERT target valid while allowing all pre-existing NULL run_ids.
+  if (quantColumns.has("run_id")) {
+    await db.prepare("CREATE UNIQUE INDEX IF NOT EXISTS idx_quant_runs_run_id ON quant_runs(run_id)").run();
+  }
+
   await addMissingColumns(db, "research_archives", [
     ["status", "TEXT NOT NULL DEFAULT 'started'"],
     ["expected_symbols", "INTEGER NOT NULL DEFAULT 0"],
@@ -84,9 +95,6 @@ async function ensureSchema(db) {
   await addMissingColumns(db, "research_rows", [["row_json", "TEXT NOT NULL DEFAULT '{}'" ]]);
   await addMissingColumns(db, "portfolio_rows", [["row_hash", "TEXT NOT NULL DEFAULT ''"], ["row_json", "TEXT NOT NULL DEFAULT '{}'" ]]);
 
-  // Deliberately avoid creating the legacy idx_quant_runs_date index here.
-  // The connected production D1 contains a legacy schema and the index is
-  // not required for correctness of the expected run count.
   if ((await tableColumns(db, "research_rows")).has("run_id")) {
     await db.prepare("CREATE INDEX IF NOT EXISTS idx_research_rows_run ON research_rows(run_id)").run();
   }
@@ -133,7 +141,7 @@ async function handleRead(path, url, env) {
       const result = await db.prepare("PRAGMA table_info(quant_runs)").all();
       columns = (result.results || []).map((row) => String(row.name));
     }
-    return json({ ok: true, service: "bursa-musangking-quant-terminal", version: "5.0.3", db_bound: true, quant_runs_type: table?.type || null, quant_runs_columns: columns });
+    return json({ ok: true, service: "bursa-musangking-quant-terminal", version: "5.0.4", db_bound: true, quant_runs_type: table?.type || null, quant_runs_columns: columns });
   }
 
   await ensureSchema(db);
