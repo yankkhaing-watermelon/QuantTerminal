@@ -7,7 +7,7 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "quant"))
 
-from bmk_quant.engine import _percentile, _portfolio, _rsi  # noqa: E402
+from bmk_quant.engine import _backtest, _percentile, _portfolio, _rsi  # noqa: E402
 
 
 class EngineTests(unittest.TestCase):
@@ -41,6 +41,23 @@ class EngineTests(unittest.TestCase):
             portfolio, summary = _portfolio(rows, "RISK-ON")
         self.assertEqual(portfolio[0]["target_weight"], 0.0)
         self.assertEqual(summary["capital_deployed"], 0.0)
+
+    def test_backtest_drawdown_uses_period_cohorts(self):
+        dates = pd.date_range("2025-01-01", periods=180, freq="B")
+        prices = {}
+        scored = []
+        for index in range(6):
+            symbol = f"S{index}"
+            close = pd.Series([100 * (0.995 ** day) * (1 + index * 0.001) for day in range(180)], index=dates)
+            prices[symbol] = pd.DataFrame({"Close": close})
+            scored.append({"symbol": symbol})
+
+        result = _backtest(scored, prices)
+
+        self.assertEqual(result["total_trades"], 24)
+        self.assertLess(result["max_drawdown"], 0)
+        self.assertGreater(result["max_drawdown"], -100)
+        self.assertEqual([group["name"] for group in result["groups"]], ["Q1", "Q2", "Q3", "Q4", "Q5", "Q6"])
 
 
 if __name__ == "__main__":

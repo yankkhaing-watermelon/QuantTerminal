@@ -310,7 +310,7 @@ def _backtest(scored: list[dict], prices: dict[str, pd.DataFrame]) -> dict:
             momentum = close.iloc[-lag - 1] / close.iloc[-lag - 61] - 1
             forward = close.iloc[-lag + 19] / close.iloc[-lag - 1] - 1 if lag >= 20 else np.nan
             if math.isfinite(momentum) and math.isfinite(forward):
-                records.append({"momentum": momentum, "forward": forward})
+                records.append({"momentum": momentum, "forward": forward, "period": lag})
     if not records:
         return {"total_trades": 0, "win_rate": 0, "expectancy": 0, "max_drawdown": 0, "groups": []}
     frame = pd.DataFrame(records)
@@ -321,7 +321,13 @@ def _backtest(scored: list[dict], prices: dict[str, pd.DataFrame]) -> dict:
         losses = group.forward[group.forward <= 0]
         profit_factor = wins.sum() / max(abs(losses.sum()), 1e-9)
         groups.append({"name": str(name), "trades": len(group), "win_rate": _finite((group.forward > 0).mean() * 100), "expectancy": _finite(group.forward.mean() * 100), "profit_factor": _finite(profit_factor)})
-    equity = (1 + frame.forward.fillna(0)).cumprod()
+    # Each lag is one cross-sectional observation period. Compounding every
+    # stock return in row order treats simultaneous signals as sequential
+    # trades and can manufacture a near -100% drawdown. Use the equal-weight
+    # cohort return for each period to form a chronological equity curve.
+    cohort_returns = frame.groupby("period").forward.mean().sort_index(ascending=False).clip(lower=-0.999)
+    equity = (1 + cohort_returns).cumprod().reset_index(drop=True)
+    equity = pd.concat([pd.Series([1.0]), equity], ignore_index=True)
     drawdown = equity / equity.cummax() - 1
     return {"total_trades": len(frame), "win_rate": _finite((frame.forward > 0).mean() * 100), "expectancy": _finite(frame.forward.mean() * 100), "max_drawdown": _finite(drawdown.min() * 100), "groups": groups}
 
