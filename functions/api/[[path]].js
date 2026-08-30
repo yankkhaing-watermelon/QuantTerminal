@@ -84,10 +84,13 @@ async function ensureSchema(db) {
   await addMissingColumns(db, "research_rows", [["row_json", "TEXT NOT NULL DEFAULT '{}'" ]]);
   await addMissingColumns(db, "portfolio_rows", [["row_hash", "TEXT NOT NULL DEFAULT ''"], ["row_json", "TEXT NOT NULL DEFAULT '{}'" ]]);
 
-  const finalQuantColumns = await tableColumns(db, "quant_runs");
-  if (finalQuantColumns.has("scan_date") && finalQuantColumns.has("generated_at")) {
-    await db.prepare("CREATE INDEX IF NOT EXISTS idx_quant_runs_date ON quant_runs(scan_date DESC, generated_at DESC)").run();
-  }
+  // Deliberately avoid creating the legacy idx_quant_runs_date index here.
+  // The connected production D1 contains a legacy schema and D1 can reject
+  // this CREATE INDEX statement at scan_date even after PRAGMA confirms the
+  // column exists. The index is not required for correctness; the read paths
+  // already sort by the canonical date fields and the expected run count is
+  // small. Research/portfolio indexes remain safe because their primary key
+  // columns are guaranteed by the schema above.
   if ((await tableColumns(db, "research_rows")).has("run_id")) {
     await db.prepare("CREATE INDEX IF NOT EXISTS idx_research_rows_run ON research_rows(run_id)").run();
   }
@@ -119,7 +122,7 @@ async function handleRead(path, url, env) {
   const db = getDb(env);
 
   // Keep health independent from the legacy schema so it can diagnose a bad
-  // migration instead of failing on scan_date before reporting service health.
+  // migration instead of failing on schema/index setup before reporting health.
   if (path === "/api/health") {
     const table = await db.prepare("SELECT type FROM sqlite_master WHERE name='quant_runs' LIMIT 1").first();
     let columns = [];
@@ -127,7 +130,7 @@ async function handleRead(path, url, env) {
       const result = await db.prepare("PRAGMA table_info(quant_runs)").all();
       columns = (result.results || []).map((row) => String(row.name));
     }
-    return json({ ok: true, service: "bursa-musangking-quant-terminal", version: "5.0.1", db_bound: true, quant_runs_type: table?.type || null, quant_runs_columns: columns });
+    return json({ ok: true, service: "bursa-musangking-quant-terminal", version: "5.0.2", db_bound: true, quant_runs_type: table?.type || null, quant_runs_columns: columns });
   }
 
   await ensureSchema(db);
