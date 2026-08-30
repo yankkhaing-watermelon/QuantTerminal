@@ -4,6 +4,7 @@ import hashlib
 import json
 import math
 import os
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import asdict
 from datetime import datetime, timezone
@@ -17,7 +18,13 @@ from .universe import Security, get_universe
 
 MIN_BARS = 220
 MIN_UNIVERSE = int(os.getenv("MIN_UNIVERSE", "900"))
-BATCH_SIZE = int(os.getenv("YF_BATCH_SIZE", "60"))
+# Yahoo can throttle nested parallel requests. Keep our own concurrency small
+# and disable yfinance's internal thread pool. Smaller batches also make
+# partial provider responses recoverable without discarding the whole batch.
+BATCH_SIZE = int(os.getenv("YF_BATCH_SIZE", "30"))
+MAX_WORKERS = int(os.getenv("YF_MAX_WORKERS", "2"))
+DOWNLOAD_RETRIES = int(os.getenv("YF_DOWNLOAD_RETRIES", "3"))
+RETRY_BACKOFF_SECONDS = float(os.getenv("YF_RETRY_BACKOFF", "2"))
 
 
 def _finite(value: float | int | np.number | None, digits: int = 6):
@@ -43,8 +50,37 @@ def _percentile(series: pd.Series, higher_is_better: bool = True) -> pd.Series:
     return ranked if higher_is_better else 100 - ranked
 
 
-def _download_chunk(securities: list[Security]) -> dict[str, pd.DataFrame]:
-    tickers = [f"{security.symbol}.KL" for security in securities]
+def _extract_price_frame(raw: pd.DataFrame, ticker: str) -> pd.DataFrame | None:
+    """Normalize one ticker from a yfinance batch/single-symbol response."""
+    try:
+        if raw is None or raw.empty:
+            return None
+        if isinstance(raw.columns, pd.MultiIndex):
+            # yfinance normally returns ticker-first columns for group_by=ticker,
+            # but tolerate field-first output as well.
+            if ticker in raw.columns.get_level_values(0):
+                frame = raw[ticker]
+            elif ticker in raw.columns.get_level_values(-1):
+                frame = raw.xs(ticker, axis=1, level=-1)
+            else:
+                return None
+        else:
+            frame = raw
+        frame = frame.rename(columns=str.title)
+        required = ["Open", "High", "Low", "Close", "Volume"]
+        if not all(column in frame.columns for column in required):
+            return None
+        frame = frame[required].dropna(subset=["Close"])
+        if frame.empty:
+            return None
+        frame.index = pd.to_datetime(frame.index).tz_localize(None)
+        return frame
+    except (KeyError, TypeError, ValueError, IndexError):
+        return None
+
+
+def _download_once(tickers: list[str]) -> tuple[dict[str, pd.DataFrame], set[str]]:
+    """Download a batch once and return usable frames plus unresolved tickers."""
     raw = yf.download(
         tickers=tickers,
         period="18mo",
@@ -52,44 +88,124 @@ def _download_chunk(securities: list[Security]) -> dict[str, pd.DataFrame]:
         auto_adjust=False,
         actions=False,
         group_by="ticker",
-        threads=True,
+        # Do not nest yfinance's threads inside our executor.
+        threads=False,
         progress=False,
         timeout=30,
     )
     result: dict[str, pd.DataFrame] = {}
-    for security, ticker in zip(securities, tickers, strict=True):
-        try:
-            frame = raw[ticker] if isinstance(raw.columns, pd.MultiIndex) else raw
-            frame = frame.rename(columns=str.title)[["Open", "High", "Low", "Close", "Volume"]].dropna(subset=["Close"])
-            frame.index = pd.to_datetime(frame.index).tz_localize(None)
-            if len(frame) >= MIN_BARS:
-                result[security.symbol] = frame
-        except (KeyError, TypeError, ValueError):
+    unresolved: set[str] = set()
+    for ticker in tickers:
+        frame = _extract_price_frame(raw, ticker)
+        if frame is None or len(frame) < MIN_BARS:
+            unresolved.add(ticker)
             continue
-    return result
+        result[ticker] = frame
+    return result, unresolved
+
+
+def _download_single(ticker: str) -> pd.DataFrame | None:
+    """Last-resort single-symbol request for a transient batch failure."""
+    try:
+        raw = yf.download(
+            tickers=ticker,
+            period="18mo",
+            interval="1d",
+            auto_adjust=False,
+            actions=False,
+            group_by="ticker",
+            threads=False,
+            progress=False,
+            timeout=30,
+        )
+        frame = _extract_price_frame(raw, ticker)
+        if frame is not None and len(frame) >= MIN_BARS:
+            return frame
+    except Exception:  # noqa: BLE001 - one provider failure must not abort the universe
+        pass
+    return None
+
+
+def _download_chunk(securities: list[Security]) -> dict[str, pd.DataFrame]:
+    """Resiliently download one universe chunk without letting partial Yahoo responses erase it."""
+    ticker_by_symbol = {security.symbol: f"{security.symbol}.KL" for security in securities}
+    pending = list(ticker_by_symbol.values())
+    result_by_ticker: dict[str, pd.DataFrame] = {}
+
+    for attempt in range(1, DOWNLOAD_RETRIES + 1):
+        if not pending:
+            break
+        try:
+            frames, unresolved = _download_once(pending)
+            result_by_ticker.update(frames)
+            pending = [ticker for ticker in pending if ticker in unresolved]
+        except Exception:  # noqa: BLE001 - retry the affected batch
+            pass
+        if pending and attempt < DOWNLOAD_RETRIES:
+            time.sleep(RETRY_BACKOFF_SECONDS * attempt)
+
+    # If a batch is still partially unresolved, retry the remainder in small
+    # serial sub-batches. This is the key protection against transient Yahoo
+    # partial responses that previously left the full-universe run with only a
+    # handful of frames (for example 71/1000+).
+    if pending:
+        for start in range(0, len(pending), 5):
+            sub_pending = pending[start:start + 5]
+            for attempt in range(1, 3):
+                try:
+                    frames, unresolved = _download_once(sub_pending)
+                    result_by_ticker.update(frames)
+                    sub_pending = [ticker for ticker in sub_pending if ticker in unresolved]
+                except Exception:  # noqa: BLE001
+                    pass
+                if not sub_pending or attempt == 2:
+                    break
+                time.sleep(RETRY_BACKOFF_SECONDS * attempt)
+
+            # Absolute last resort: individual requests for anything still
+            # unresolved. Invalid/delisted symbols will simply remain absent.
+            for ticker in sub_pending:
+                frame = _download_single(ticker)
+                if frame is not None:
+                    result_by_ticker[ticker] = frame
+
+    return {
+        security.symbol: result_by_ticker[ticker_by_symbol[security.symbol]]
+        for security in securities
+        if ticker_by_symbol[security.symbol] in result_by_ticker
+    }
 
 
 def _download_prices(universe: tuple[Security, ...]) -> dict[str, pd.DataFrame]:
     chunks = [list(universe[index:index + BATCH_SIZE]) for index in range(0, len(universe), BATCH_SIZE)]
     prices: dict[str, pd.DataFrame] = {}
-    with ThreadPoolExecutor(max_workers=3) as pool:
+    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as pool:
         futures = [pool.submit(_download_chunk, chunk) for chunk in chunks]
         for future in as_completed(futures):
-            prices.update(future.result())
+            try:
+                prices.update(future.result())
+            except Exception as exc:  # noqa: BLE001 - one batch must never kill the full universe
+                print(f"Yahoo batch failed and was skipped: {type(exc).__name__}: {exc}")
+    print(f"Yahoo price coverage: {len(prices)}/{len(universe)} frames with >= {MIN_BARS} bars")
     return prices
 
 
 def _benchmark() -> pd.Series:
-    for _ in range(3):
-        raw = yf.download("^KLSE", period="18mo", interval="1d", auto_adjust=False, actions=False, progress=False, timeout=30)
-        close = raw.get("Close")
-        if isinstance(close, pd.DataFrame):
-            close = close.iloc[:, 0]
-        if close is not None:
-            close = close.dropna()
-            close.index = pd.to_datetime(close.index).tz_localize(None)
-            if len(close) >= MIN_BARS:
-                return close
+    for attempt in range(3):
+        try:
+            raw = yf.download("^KLSE", period="18mo", interval="1d", auto_adjust=False, actions=False, progress=False, timeout=30)
+            close = raw.get("Close")
+            if isinstance(close, pd.DataFrame):
+                close = close.iloc[:, 0]
+            if close is not None:
+                close = close.dropna()
+                close.index = pd.to_datetime(close.index).tz_localize(None)
+                if len(close) >= MIN_BARS:
+                    return close
+        except Exception:
+            pass
+        if attempt < 2:
+            time.sleep(RETRY_BACKOFF_SECONDS * (attempt + 1))
     raise RuntimeError("benchmark_unavailable_or_short")
 
 
