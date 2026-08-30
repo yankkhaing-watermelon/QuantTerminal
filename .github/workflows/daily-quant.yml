@@ -33,6 +33,8 @@ jobs:
           MAX_SYMBOLS: ${{ inputs.max_symbols || '0' }}
           PORTFOLIO_SYMBOLS: ${{ vars.PORTFOLIO_SYMBOLS }}
         run: python scripts/run_quant.py --output artifacts/latest --max-symbols "$MAX_SYMBOLS"
+      - name: Validate rankings and portfolio payload
+        run: python scripts/validate_rankings.py --artifacts artifacts/latest
       - name: Publish research archive and terminal payload
         env:
           QUANT_API_BASE: ${{ secrets.QUANT_API_BASE }}
