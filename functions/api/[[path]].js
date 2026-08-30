@@ -141,7 +141,7 @@ async function handleRead(path, url, env) {
       const result = await db.prepare("PRAGMA table_info(quant_runs)").all();
       columns = (result.results || []).map((row) => String(row.name));
     }
-    return json({ ok: true, service: "bursa-musangking-quant-terminal", version: "5.0.4", db_bound: true, quant_runs_type: table?.type || null, quant_runs_columns: columns });
+    return json({ ok: true, service: "bursa-musangking-quant-terminal", version: "5.0.5", db_bound: true, quant_runs_type: table?.type || null, quant_runs_columns: columns });
   }
 
   await ensureSchema(db);
@@ -165,6 +165,34 @@ async function handleRead(path, url, env) {
   return json({ ok: false, error: "not_found" }, 404);
 }
 
+async function publishQuantRun(db, run, payloadHash) {
+  const info = await db.prepare("PRAGMA table_info(quant_runs)").all();
+  const idInfo = (info.results || []).find((row) => String(row.name) === "id");
+  const idType = String(idInfo?.type || "").toUpperCase();
+  const idRequired = Boolean(idInfo && Number(idInfo.notnull) === 1 && idInfo.dflt_value == null);
+
+  // Legacy D1 has a required `id` column with no default. A normal UPSERT
+  // cannot reach its run_id conflict target because SQLite checks NOT NULL
+  // constraints on the proposed INSERT first. Supply a compatible legacy id.
+  if (idRequired && idType.includes("INT")) {
+    // Keep id generation in the same INSERT statement. SQLite aggregate
+    // queries without GROUP BY return one row even when the table is empty.
+    await db.prepare("INSERT INTO quant_runs(id, run_id, scan_date, generated_at, payload_hash, payload_json) SELECT COALESCE(MAX(id), 0) + 1, ?, ?, ?, ?, ? FROM quant_runs ON CONFLICT(run_id) DO UPDATE SET scan_date=excluded.scan_date, generated_at=excluded.generated_at, payload_hash=excluded.payload_hash, payload_json=excluded.payload_json")
+      .bind(run.run_id, run.scan_date, run.generated_at, payloadHash, JSON.stringify(run)).run();
+    return;
+  }
+
+  if (idRequired) {
+    const legacyId = `${run.run_id}-${Date.now()}-${crypto.randomUUID()}`;
+    await db.prepare("INSERT INTO quant_runs(id, run_id, scan_date, generated_at, payload_hash, payload_json) VALUES(?,?,?,?,?,?) ON CONFLICT(run_id) DO UPDATE SET scan_date=excluded.scan_date, generated_at=excluded.generated_at, payload_hash=excluded.payload_hash, payload_json=excluded.payload_json")
+      .bind(legacyId, run.run_id, run.scan_date, run.generated_at, payloadHash, JSON.stringify(run)).run();
+    return;
+  }
+
+  await db.prepare("INSERT INTO quant_runs(run_id, scan_date, generated_at, payload_hash, payload_json) VALUES(?,?,?,?,?) ON CONFLICT(run_id) DO UPDATE SET scan_date=excluded.scan_date, generated_at=excluded.generated_at, payload_hash=excluded.payload_hash, payload_json=excluded.payload_json")
+    .bind(run.run_id, run.scan_date, run.generated_at, payloadHash, JSON.stringify(run)).run();
+}
+
 async function handleWrite(request, path, env) {
   if (!(await authorized(request, env))) return json({ ok: false, error: "unauthorized" }, 401);
   const db = getDb(env);
@@ -177,8 +205,7 @@ async function handleWrite(request, path, env) {
     const serialized = stable(run);
     const payloadHash = await sha256(serialized);
     if (payload.payload_hash && payload.payload_hash !== payloadHash) return json({ ok: false, error: "payload_hash_mismatch" }, 422);
-    await db.prepare("INSERT INTO quant_runs(run_id, scan_date, generated_at, payload_hash, payload_json) VALUES(?,?,?,?,?) ON CONFLICT(run_id) DO UPDATE SET scan_date=excluded.scan_date, generated_at=excluded.generated_at, payload_hash=excluded.payload_hash, payload_json=excluded.payload_json")
-      .bind(run.run_id, run.scan_date, run.generated_at, payloadHash, JSON.stringify(run)).run();
+    await publishQuantRun(db, run, payloadHash);
     return json({ ok: true, run_id: run.run_id, payload_hash: payloadHash });
   }
 
