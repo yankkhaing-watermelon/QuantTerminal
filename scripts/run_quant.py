@@ -6,7 +6,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "quant"))
 
-from bmk_quant.engine import write_artifacts  # noqa: E402
+from bmk_quant import write_artifacts  # noqa: E402
 
 
 def main() -> int:
