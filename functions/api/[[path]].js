@@ -141,7 +141,7 @@ async function handleRead(path, url, env) {
       const result = await db.prepare("PRAGMA table_info(quant_runs)").all();
       columns = (result.results || []).map((row) => String(row.name));
     }
-    return json({ ok: true, service: "bursa-musangking-quant-terminal", version: "5.0.5", db_bound: true, quant_runs_type: table?.type || null, quant_runs_columns: columns });
+    return json({ ok: true, service: "bursa-musangking-quant-terminal", version: "5.0.6", db_bound: true, quant_runs_type: table?.type || null, quant_runs_columns: columns });
   }
 
   await ensureSchema(db);
@@ -177,7 +177,9 @@ async function publishQuantRun(db, run, payloadHash) {
   if (idRequired && idType.includes("INT")) {
     // Keep id generation in the same INSERT statement. SQLite aggregate
     // queries without GROUP BY return one row even when the table is empty.
-    await db.prepare("INSERT INTO quant_runs(id, run_id, scan_date, generated_at, payload_hash, payload_json) SELECT COALESCE(MAX(id), 0) + 1, ?, ?, ?, ?, ? FROM quant_runs ON CONFLICT(run_id) DO UPDATE SET scan_date=excluded.scan_date, generated_at=excluded.generated_at, payload_hash=excluded.payload_hash, payload_json=excluded.payload_json")
+    // WHERE true also removes the SQLite INSERT...SELECT/UPSERT parsing
+    // ambiguity documented by SQLite.
+    await db.prepare("INSERT INTO quant_runs(id, run_id, scan_date, generated_at, payload_hash, payload_json) SELECT COALESCE(MAX(id), 0) + 1, ?, ?, ?, ?, ? FROM quant_runs WHERE true ON CONFLICT(run_id) DO UPDATE SET scan_date=excluded.scan_date, generated_at=excluded.generated_at, payload_hash=excluded.payload_hash, payload_json=excluded.payload_json")
       .bind(run.run_id, run.scan_date, run.generated_at, payloadHash, JSON.stringify(run)).run();
     return;
   }
