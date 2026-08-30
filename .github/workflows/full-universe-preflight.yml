@@ -1,0 +1,28 @@
+name: Full Universe Preflight
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  preflight:
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Inspect full Bursa universe without publishing
+        run: python scripts/preflight_full_universe.py | tee full-universe-preflight.txt
+      - name: Upload preflight report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: full-universe-preflight-${{ github.run_id }}
+          path: full-universe-preflight.txt
+          retention-days: 14
