@@ -1,22 +1,14 @@
+import {
+  ArchiveIntegrityError,
+  sha256,
+  stable,
+  verifyResearchArchive,
+} from "../../../lib/research-archive.js";
+
 const json = (body, status = 200) => new Response(JSON.stringify(body), {
   status,
   headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" },
 });
-
-const encoder = new TextEncoder();
-
-async function sha256(value) {
-  const bytes = await crypto.subtle.digest("SHA-256", encoder.encode(value));
-  return [...new Uint8Array(bytes)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
-}
-
-function stable(value) {
-  if (Array.isArray(value)) return `[${value.map(stable).join(",")}]`;
-  if (value && typeof value === "object") {
-    return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${stable(value[key])}`).join(",")}}`;
-  }
-  return JSON.stringify(value);
-}
 
 async function authorized(request, env) {
   if (!env.PUBLISH_TOKEN) return false;
@@ -133,11 +125,22 @@ export async function onRequestPost(context) {
     const serialized = stable(run);
     const payloadHash = await sha256(serialized);
     if (payload.payload_hash && payload.payload_hash !== payloadHash) return json({ ok: false, error: "payload_hash_mismatch" }, 422);
-    await publishQuantRun(getDb(env), run, payloadHash);
-    return json({ ok: true, run_id: run.run_id, payload_hash: payloadHash });
+
+    const db = getDb(env);
+    const archive = await verifyResearchArchive(db, run.run_id);
+    await publishQuantRun(db, run, payloadHash);
+    return json({
+      ok: true,
+      run_id: run.run_id,
+      payload_hash: payloadHash,
+      research_payload_hash: archive.payload_hash,
+      research_manifest_hash: archive.manifest_hash,
+      research_integrity: archive.integrity,
+    });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    return json({ ok: false, error: message }, 500);
+    const status = error instanceof ArchiveIntegrityError ? error.status : 500;
+    return json({ ok: false, error: message }, status);
   }
 }
 
