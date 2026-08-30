@@ -35,9 +35,48 @@ def post(session: requests.Session, url: str, payload: dict) -> dict:
     return response.json()
 
 
+def get(session: requests.Session, url: str) -> dict:
+    response = session.get(url, timeout=60)
+    if not response.ok:
+        raise RuntimeError(f"archive verification rejected with HTTP {response.status_code}: {response.text[:500]}")
+    return response.json()
+
+
 def chunks(rows: list[dict], size: int = 75):
     for index in range(0, len(rows), size):
         yield rows[index:index + size]
+
+
+def research_fingerprint(research: list[dict]) -> str:
+    canonical = sorted(research, key=lambda row: str(row.get("symbol") or ""))
+    encoded = json.dumps(canonical, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()[:12]
+
+
+def content_addressed_run_id(payload: dict, research: list[dict]) -> str:
+    scan_date = str(payload.get("scan_date") or "").strip()
+    if not scan_date:
+        raise RuntimeError("missing scan_date for content-addressed run id")
+    return f"qv5-{scan_date}-{research_fingerprint(research)}"
+
+
+def validate_archive_status(status: dict, run_id: str, expected_symbols: int) -> None:
+    if not status.get("ok"):
+        raise RuntimeError(f"research archive status not ok: {status}")
+    if str(status.get("run_id") or "") != run_id:
+        raise RuntimeError(f"research archive run_id mismatch: {status.get('run_id')} != {run_id}")
+    if status.get("status") != "archived" or status.get("integrity") != "verified":
+        raise RuntimeError(f"research archive not verified: {status}")
+    expected = int(status.get("expected_symbols") or 0)
+    received = int(status.get("received_symbols") or 0)
+    if expected != expected_symbols or received != expected_symbols:
+        raise RuntimeError(f"research archive count mismatch: expected={expected} received={received} local={expected_symbols}")
+    for key in ("payload_hash", "manifest_hash"):
+        value = str(status.get(key) or "")
+        if len(value) != 64 or any(char not in "0123456789abcdef" for char in value):
+            raise RuntimeError(f"research archive missing valid {key}: {value!r}")
+    if not status.get("archived_at"):
+        raise RuntimeError("research archive missing archived_at")
 
 
 def main() -> int:
@@ -48,21 +87,45 @@ def main() -> int:
     token = os.getenv("PUBLISH_TOKEN", "")
     if not args.api_base or not token:
         raise SystemExit("QUANT_API_BASE and PUBLISH_TOKEN are required")
+
     root = Path(args.artifacts)
-    payload = json.loads((root / "latest.json").read_text(encoding="utf-8"))
+    latest_path = root / "latest.json"
+    payload = json.loads(latest_path.read_text(encoding="utf-8"))
     research = json.loads((root / "research.json").read_text(encoding="utf-8"))
-    run_id = payload["run_id"]
+    if not isinstance(research, list) or not research:
+        raise RuntimeError("research.json must contain at least one row")
+
+    run_id = content_addressed_run_id(payload, research)
+    payload["run_id"] = run_id
+    latest_path.write_text(json.dumps(payload, separators=(",", ":"), ensure_ascii=False), encoding="utf-8")
+
     session = requests.Session()
-    session.headers.update({"authorization": f"Bearer {token}", "user-agent": "bmk-quant-publisher/5.0"})
+    session.headers.update({"authorization": f"Bearer {token}", "user-agent": "bmk-quant-publisher/5.0-step13"})
     base = args.api_base.rstrip("/")
     check_auth(session, base, token)
-    print("Research archive start:", post(session, f"{base}/api/admin/runs/{run_id}/research/start", {"expected_symbols": len(research)}))
-    for batch in chunks(research):
-        post(session, f"{base}/api/admin/runs/{run_id}/research/batch", {"rows": batch})
-    print("Research archive commit:", post(session, f"{base}/api/admin/runs/{run_id}/research/commit", {}))
+
+    start = post(session, f"{base}/api/admin/runs/{run_id}/research/start", {"expected_symbols": len(research)})
+    print("Research archive start:", start)
+    if start.get("status") != "already_archived":
+        for batch in chunks(research):
+            post(session, f"{base}/api/admin/runs/{run_id}/research/batch", {"rows": batch})
+        print("Research archive commit:", post(session, f"{base}/api/admin/runs/{run_id}/research/commit", {}))
+
+    archive = get(session, f"{base}/api/admin/runs/{run_id}/research/status")
+    validate_archive_status(archive, run_id, len(research))
+    print("Research archive verified; continuing normal Quant publication.")
+
     for batch in chunks(payload.get("portfolio", [])):
         post(session, f"{base}/api/admin/runs/{run_id}/portfolio", {"rows": batch})
-    print("Quant publication:", post(session, f"{base}/api/admin/publish", {"data": payload}))
+
+    publication = post(session, f"{base}/api/admin/publish", {"data": payload})
+    if publication.get("research_integrity") != "verified":
+        raise RuntimeError(f"Quant publication did not confirm research integrity: {publication}")
+    if publication.get("research_payload_hash") != archive.get("payload_hash"):
+        raise RuntimeError("Quant publication research payload hash differs from verified archive")
+    if publication.get("research_manifest_hash") != archive.get("manifest_hash"):
+        raise RuntimeError("Quant publication research manifest hash differs from verified archive")
+    print("Quant publication:", publication)
     return 0
 
 
