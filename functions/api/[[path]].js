@@ -33,15 +33,75 @@ async function authorized(request, env) {
   return secureEqual(token, env.PUBLISH_TOKEN);
 }
 
+async function tableColumns(db, table) {
+  const result = await db.prepare(`PRAGMA table_info(${table})`).all();
+  return new Set((result.results || []).map((row) => String(row.name)));
+}
+
+async function addMissingColumns(db, table, definitions) {
+  const columns = await tableColumns(db, table);
+  for (const [column, definition] of definitions) {
+    if (!columns.has(column)) {
+      await db.prepare(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`).run();
+    }
+  }
+  return await tableColumns(db, table);
+}
+
 async function ensureSchema(db) {
-  const statements = [
-    "CREATE TABLE IF NOT EXISTS quant_runs (run_id TEXT PRIMARY KEY, scan_date TEXT NOT NULL, generated_at TEXT NOT NULL, payload_hash TEXT NOT NULL, payload_json TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT (datetime('now')))",
-    "CREATE INDEX IF NOT EXISTS idx_quant_runs_date ON quant_runs(scan_date DESC, generated_at DESC)",
-    "CREATE TABLE IF NOT EXISTS research_archives (run_id TEXT PRIMARY KEY, status TEXT NOT NULL, expected_symbols INTEGER NOT NULL DEFAULT 0, received_symbols INTEGER NOT NULL DEFAULT 0, payload_hash TEXT, updated_at TEXT NOT NULL DEFAULT (datetime('now')))",
-    "CREATE TABLE IF NOT EXISTS research_rows (run_id TEXT NOT NULL, symbol TEXT NOT NULL, row_json TEXT NOT NULL, PRIMARY KEY (run_id, symbol))",
-    "CREATE TABLE IF NOT EXISTS portfolio_rows (run_id TEXT NOT NULL, symbol TEXT NOT NULL, row_hash TEXT NOT NULL, row_json TEXT NOT NULL, PRIMARY KEY (run_id, symbol))",
-  ];
-  await db.batch(statements.map((sql) => db.prepare(sql)));
+  // Create missing tables first. The existing D1 database may contain an older
+  // Quant Terminal schema, so CREATE TABLE IF NOT EXISTS alone is not enough:
+  // it does not add columns to an already-existing table.
+  await db.batch([
+    db.prepare("CREATE TABLE IF NOT EXISTS quant_runs (run_id TEXT PRIMARY KEY, scan_date TEXT NOT NULL DEFAULT '', generated_at TEXT NOT NULL DEFAULT '', payload_hash TEXT NOT NULL DEFAULT '', payload_json TEXT NOT NULL DEFAULT '{}', created_at TEXT NOT NULL DEFAULT '')"),
+    db.prepare("CREATE TABLE IF NOT EXISTS research_archives (run_id TEXT PRIMARY KEY, status TEXT NOT NULL DEFAULT 'started', expected_symbols INTEGER NOT NULL DEFAULT 0, received_symbols INTEGER NOT NULL DEFAULT 0, payload_hash TEXT, updated_at TEXT NOT NULL DEFAULT '')"),
+    db.prepare("CREATE TABLE IF NOT EXISTS research_rows (run_id TEXT NOT NULL, symbol TEXT NOT NULL, row_json TEXT NOT NULL DEFAULT '{}', PRIMARY KEY (run_id, symbol))"),
+    db.prepare("CREATE TABLE IF NOT EXISTS portfolio_rows (run_id TEXT NOT NULL, symbol TEXT NOT NULL, row_hash TEXT NOT NULL DEFAULT '', row_json TEXT NOT NULL DEFAULT '{}', PRIMARY KEY (run_id, symbol))"),
+  ]);
+
+  const quantColumns = await addMissingColumns(db, "quant_runs", [
+    ["scan_date", "TEXT NOT NULL DEFAULT ''"],
+    ["generated_at", "TEXT NOT NULL DEFAULT ''"],
+    ["payload_hash", "TEXT NOT NULL DEFAULT ''"],
+    ["payload_json", "TEXT NOT NULL DEFAULT '{}'"],
+    ["created_at", "TEXT NOT NULL DEFAULT ''"],
+  ]);
+
+  // Preserve useful date/time data from common legacy column names when the
+  // new canonical columns were just added.
+  if (quantColumns.has("date")) {
+    await db.prepare("UPDATE quant_runs SET scan_date = date WHERE (scan_date IS NULL OR scan_date = '') AND date IS NOT NULL").run();
+  } else if (quantColumns.has("run_date")) {
+    await db.prepare("UPDATE quant_runs SET scan_date = run_date WHERE (scan_date IS NULL OR scan_date = '') AND run_date IS NOT NULL").run();
+  }
+  if (quantColumns.has("timestamp")) {
+    await db.prepare("UPDATE quant_runs SET generated_at = timestamp WHERE (generated_at IS NULL OR generated_at = '') AND timestamp IS NOT NULL").run();
+  }
+  if (quantColumns.has("created_at")) {
+    await db.prepare("UPDATE quant_runs SET generated_at = created_at WHERE (generated_at IS NULL OR generated_at = '') AND created_at IS NOT NULL").run();
+  }
+
+  await addMissingColumns(db, "research_archives", [
+    ["status", "TEXT NOT NULL DEFAULT 'started'"],
+    ["expected_symbols", "INTEGER NOT NULL DEFAULT 0"],
+    ["received_symbols", "INTEGER NOT NULL DEFAULT 0"],
+    ["payload_hash", "TEXT"],
+    ["updated_at", "TEXT NOT NULL DEFAULT ''"],
+  ]);
+  await addMissingColumns(db, "research_rows", [
+    ["row_json", "TEXT NOT NULL DEFAULT '{}'"],
+  ]);
+  await addMissingColumns(db, "portfolio_rows", [
+    ["row_hash", "TEXT NOT NULL DEFAULT ''"],
+    ["row_json", "TEXT NOT NULL DEFAULT '{}'"],
+  ]);
+
+  // Only create indexes after their required columns have been confirmed.
+  await db.batch([
+    db.prepare("CREATE INDEX IF NOT EXISTS idx_quant_runs_date ON quant_runs(scan_date DESC, generated_at DESC)"),
+    db.prepare("CREATE INDEX IF NOT EXISTS idx_research_rows_run ON research_rows(run_id)"),
+    db.prepare("CREATE INDEX IF NOT EXISTS idx_portfolio_rows_run ON portfolio_rows(run_id)"),
+  ]);
 }
 
 function getDb(env) {
