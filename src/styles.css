@@ -127,17 +127,23 @@ footer{border-color:rgba(0,104,255,.34);background:#000000;color:rgba(74,246,195
 
 /* Screenshot review corrections */
 .brand-mark,.run-button,.run-button:hover,.run-button:active,.run-button:visited{
-  background-color:#fb8b1e!important;
+  background:#fb8b1e!important;
   background-image:none!important;
-  border-color:#fb8b1e!important;
+  border:0!important;
   color:#000000!important;
+  box-shadow:none!important;
+  outline:0!important;
   filter:none!important;
   mix-blend-mode:normal;
   opacity:1;
+  -webkit-appearance:none;
+  appearance:none;
+  -webkit-tap-highlight-color:transparent;
   -webkit-print-color-adjust:exact;
   print-color-adjust:exact;
   forced-color-adjust:none
 }
+.brand-mark:focus,.brand-mark:focus-visible,.run-button:focus,.run-button:focus-visible{border:0!important;box-shadow:none!important;outline:0!important}
 .position{background:#000000}
 .position-head{align-items:flex-start;gap:12px}
 .position-head>div{min-width:0}
