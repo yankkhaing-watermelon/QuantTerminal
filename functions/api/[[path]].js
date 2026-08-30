@@ -85,12 +85,8 @@ async function ensureSchema(db) {
   await addMissingColumns(db, "portfolio_rows", [["row_hash", "TEXT NOT NULL DEFAULT ''"], ["row_json", "TEXT NOT NULL DEFAULT '{}'" ]]);
 
   // Deliberately avoid creating the legacy idx_quant_runs_date index here.
-  // The connected production D1 contains a legacy schema and D1 can reject
-  // this CREATE INDEX statement at scan_date even after PRAGMA confirms the
-  // column exists. The index is not required for correctness; the read paths
-  // already sort by the canonical date fields and the expected run count is
-  // small. Research/portfolio indexes remain safe because their primary key
-  // columns are guaranteed by the schema above.
+  // The connected production D1 contains a legacy schema and the index is
+  // not required for correctness of the expected run count.
   if ((await tableColumns(db, "research_rows")).has("run_id")) {
     await db.prepare("CREATE INDEX IF NOT EXISTS idx_research_rows_run ON research_rows(run_id)").run();
   }
@@ -114,15 +110,22 @@ async function latest(db) {
   const order = columns.has("scan_date") && columns.has("generated_at")
     ? "scan_date DESC, generated_at DESC"
     : columns.has("created_at") ? "created_at DESC" : "rowid DESC";
-  const row = await db.prepare(`SELECT payload_json FROM quant_runs ORDER BY ${order} LIMIT 1`).first();
-  return row?.payload_json ? JSON.parse(row.payload_json) : null;
+  const result = await db.prepare(`SELECT payload_json FROM quant_runs ORDER BY ${order} LIMIT 25`).all();
+  for (const row of (result.results || [])) {
+    if (!row?.payload_json) continue;
+    try {
+      const parsed = JSON.parse(row.payload_json);
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed) && Object.keys(parsed).length > 0) return parsed;
+    } catch {
+      // Ignore malformed legacy payloads and continue to the next run.
+    }
+  }
+  return null;
 }
 
 async function handleRead(path, url, env) {
   const db = getDb(env);
 
-  // Keep health independent from the legacy schema so it can diagnose a bad
-  // migration instead of failing on schema/index setup before reporting health.
   if (path === "/api/health") {
     const table = await db.prepare("SELECT type FROM sqlite_master WHERE name='quant_runs' LIMIT 1").first();
     let columns = [];
@@ -130,7 +133,7 @@ async function handleRead(path, url, env) {
       const result = await db.prepare("PRAGMA table_info(quant_runs)").all();
       columns = (result.results || []).map((row) => String(row.name));
     }
-    return json({ ok: true, service: "bursa-musangking-quant-terminal", version: "5.0.2", db_bound: true, quant_runs_type: table?.type || null, quant_runs_columns: columns });
+    return json({ ok: true, service: "bursa-musangking-quant-terminal", version: "5.0.3", db_bound: true, quant_runs_type: table?.type || null, quant_runs_columns: columns });
   }
 
   await ensureSchema(db);
