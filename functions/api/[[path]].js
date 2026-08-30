@@ -1,0 +1,171 @@
+const json = (body, status = 200, headers = {}) => new Response(JSON.stringify(body), {
+  status,
+  headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store", ...headers },
+});
+
+const encoder = new TextEncoder();
+
+async function sha256(value) {
+  const bytes = await crypto.subtle.digest("SHA-256", encoder.encode(value));
+  return [...new Uint8Array(bytes)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+function stable(value) {
+  if (Array.isArray(value)) return `[${value.map(stable).join(",")}]`;
+  if (value && typeof value === "object") {
+    return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${stable(value[key])}`).join(",")}}`;
+  }
+  return JSON.stringify(value);
+}
+
+async function secureEqual(left, right) {
+  if (!left || !right) return false;
+  const [a, b] = await Promise.all([sha256(left), sha256(right)]);
+  let diff = a.length ^ b.length;
+  for (let i = 0; i < Math.max(a.length, b.length); i += 1) diff |= a.charCodeAt(i % a.length) ^ b.charCodeAt(i % b.length);
+  return diff === 0;
+}
+
+async function authorized(request, env) {
+  if (!env.PUBLISH_TOKEN) return false;
+  const bearer = request.headers.get("authorization")?.replace(/^Bearer\s+/i, "") || "";
+  const token = bearer || request.headers.get("x-publish-token") || "";
+  return secureEqual(token, env.PUBLISH_TOKEN);
+}
+
+async function ensureSchema(db) {
+  const statements = [
+    "CREATE TABLE IF NOT EXISTS quant_runs (run_id TEXT PRIMARY KEY, scan_date TEXT NOT NULL, generated_at TEXT NOT NULL, payload_hash TEXT NOT NULL, payload_json TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT (datetime('now')))",
+    "CREATE INDEX IF NOT EXISTS idx_quant_runs_date ON quant_runs(scan_date DESC, generated_at DESC)",
+    "CREATE TABLE IF NOT EXISTS research_archives (run_id TEXT PRIMARY KEY, status TEXT NOT NULL, expected_symbols INTEGER NOT NULL DEFAULT 0, received_symbols INTEGER NOT NULL DEFAULT 0, payload_hash TEXT, updated_at TEXT NOT NULL DEFAULT (datetime('now')))",
+    "CREATE TABLE IF NOT EXISTS research_rows (run_id TEXT NOT NULL, symbol TEXT NOT NULL, row_json TEXT NOT NULL, PRIMARY KEY (run_id, symbol))",
+    "CREATE TABLE IF NOT EXISTS portfolio_rows (run_id TEXT NOT NULL, symbol TEXT NOT NULL, row_hash TEXT NOT NULL, row_json TEXT NOT NULL, PRIMARY KEY (run_id, symbol))",
+  ];
+  await db.batch(statements.map((sql) => db.prepare(sql)));
+}
+
+function getDb(env) {
+  if (!env.DB) throw new Error("D1 binding DB is not configured");
+  return env.DB;
+}
+
+async function bodyJson(request) {
+  try { return await request.json(); } catch { throw new Error("invalid_json"); }
+}
+
+async function latest(db) {
+  const row = await db.prepare("SELECT payload_json FROM quant_runs ORDER BY scan_date DESC, generated_at DESC LIMIT 1").first();
+  return row ? JSON.parse(row.payload_json) : null;
+}
+
+async function handleRead(path, url, env) {
+  const db = getDb(env);
+  await ensureSchema(db);
+  if (path === "/api/health") {
+    const count = await db.prepare("SELECT COUNT(*) AS count FROM quant_runs").first();
+    return json({ ok: true, service: "bursa-musangking-quant-terminal", version: "5.0.0", runs: Number(count?.count || 0) });
+  }
+  if (path === "/api/latest") {
+    const payload = await latest(db);
+    return payload ? json({ ok: true, data: payload }) : json({ ok: true, data: null, state: "awaiting_first_publication" });
+  }
+  if (path === "/api/history") {
+    const limit = Math.min(180, Math.max(1, Number(url.searchParams.get("limit") || 60)));
+    const result = await db.prepare("SELECT run_id, scan_date, generated_at, payload_hash FROM quant_runs ORDER BY scan_date DESC, generated_at DESC LIMIT ?").bind(limit).all();
+    return json({ ok: true, data: result.results || [] });
+  }
+  const research = path.match(/^\/api\/research\/([^/]+)$/);
+  if (research) {
+    const result = await db.prepare("SELECT symbol, row_json FROM research_rows WHERE run_id = ? ORDER BY symbol").bind(decodeURIComponent(research[1])).all();
+    return json({ ok: true, data: (result.results || []).map((row) => JSON.parse(row.row_json)) });
+  }
+  return json({ ok: false, error: "not_found" }, 404);
+}
+
+async function handleWrite(request, path, env) {
+  if (!(await authorized(request, env))) return json({ ok: false, error: "unauthorized" }, 401);
+  const db = getDb(env);
+  await ensureSchema(db);
+  const payload = await bodyJson(request);
+
+  if (path === "/api/admin/publish") {
+    const run = payload.data || payload;
+    if (!run.run_id || !run.scan_date || !run.generated_at) return json({ ok: false, error: "missing_run_identity" }, 422);
+    const serialized = stable(run);
+    const payloadHash = await sha256(serialized);
+    if (payload.payload_hash && payload.payload_hash !== payloadHash) return json({ ok: false, error: "payload_hash_mismatch" }, 422);
+    await db.prepare("INSERT INTO quant_runs(run_id, scan_date, generated_at, payload_hash, payload_json) VALUES(?,?,?,?,?) ON CONFLICT(run_id) DO UPDATE SET scan_date=excluded.scan_date, generated_at=excluded.generated_at, payload_hash=excluded.payload_hash, payload_json=excluded.payload_json")
+      .bind(run.run_id, run.scan_date, run.generated_at, payloadHash, JSON.stringify(run)).run();
+    return json({ ok: true, run_id: run.run_id, payload_hash: payloadHash });
+  }
+
+  const start = path.match(/^\/api\/admin\/runs\/([^/]+)\/research\/start$/);
+  if (start) {
+    const runId = decodeURIComponent(start[1]);
+    const current = await db.prepare("SELECT status FROM research_archives WHERE run_id=?").bind(runId).first();
+    if (current?.status === "archived") return json({ ok: true, run_id: runId, status: "already_archived" });
+    await db.prepare("INSERT INTO research_archives(run_id,status,expected_symbols,received_symbols,payload_hash,updated_at) VALUES(?, 'started', ?, 0, ?, datetime('now')) ON CONFLICT(run_id) DO UPDATE SET status='started', expected_symbols=excluded.expected_symbols, payload_hash=excluded.payload_hash, updated_at=datetime('now')")
+      .bind(runId, Number(payload.expected_symbols || 0), payload.payload_hash || null).run();
+    return json({ ok: true, run_id: runId, status: "archive_started" });
+  }
+
+  const batch = path.match(/^\/api\/admin\/runs\/([^/]+)\/research\/batch$/);
+  if (batch) {
+    const runId = decodeURIComponent(batch[1]);
+    const rows = Array.isArray(payload.rows) ? payload.rows : [];
+    if (rows.length > 100) return json({ ok: false, error: "batch_too_large:max_100" }, 422);
+    const statements = rows.map((row) => db.prepare("INSERT INTO research_rows(run_id,symbol,row_json) VALUES(?,?,?) ON CONFLICT(run_id,symbol) DO UPDATE SET row_json=excluded.row_json")
+      .bind(runId, String(row.symbol || ""), JSON.stringify(row)));
+    if (statements.length) await db.batch(statements);
+    const count = await db.prepare("SELECT COUNT(*) AS count FROM research_rows WHERE run_id=?").bind(runId).first();
+    await db.prepare("UPDATE research_archives SET received_symbols=?, updated_at=datetime('now') WHERE run_id=?").bind(Number(count?.count || 0), runId).run();
+    return json({ ok: true, run_id: runId, received_symbols: Number(count?.count || 0) });
+  }
+
+  const commit = path.match(/^\/api\/admin\/runs\/([^/]+)\/research\/commit$/);
+  if (commit) {
+    const runId = decodeURIComponent(commit[1]);
+    const archive = await db.prepare("SELECT * FROM research_archives WHERE run_id=?").bind(runId).first();
+    if (!archive) return json({ ok: false, error: "archive_not_started" }, 409);
+    if (Number(archive.expected_symbols) && Number(archive.received_symbols) < Number(archive.expected_symbols)) return json({ ok: false, error: `archive_incomplete:${archive.received_symbols}/${archive.expected_symbols}` }, 422);
+    await db.prepare("UPDATE research_archives SET status='archived', updated_at=datetime('now') WHERE run_id=?").bind(runId).run();
+    return json({ ok: true, run_id: runId, status: "archived", received_symbols: Number(archive.received_symbols) });
+  }
+
+  const portfolio = path.match(/^\/api\/admin\/runs\/([^/]+)\/portfolio$/);
+  if (portfolio) {
+    const runId = decodeURIComponent(portfolio[1]);
+    const rows = Array.isArray(payload.rows) ? payload.rows : [];
+    if (rows.length > 100) return json({ ok: false, error: "batch_too_large:max_100" }, 422);
+    const statements = [];
+    for (const source of rows) {
+      const row = { ...source };
+      const claimed = row.row_hash || "";
+      delete row.row_hash;
+      const computed = await sha256(stable(row));
+      if (claimed && claimed !== computed) return json({ ok: false, error: `portfolio_row_hash_mismatch:${row.symbol || "unknown"}` }, 422);
+      statements.push(db.prepare("INSERT INTO portfolio_rows(run_id,symbol,row_hash,row_json) VALUES(?,?,?,?) ON CONFLICT(run_id,symbol) DO UPDATE SET row_hash=excluded.row_hash,row_json=excluded.row_json")
+        .bind(runId, String(row.symbol || ""), computed, JSON.stringify({ ...row, row_hash: computed })));
+    }
+    if (statements.length) await db.batch(statements);
+    return json({ ok: true, run_id: runId, received_rows: rows.length });
+  }
+  return json({ ok: false, error: "not_found" }, 404);
+}
+
+export async function onRequest(context) {
+  const { request, env } = context;
+  const url = new URL(request.url);
+  try {
+    if (request.method === "GET") return await handleRead(url.pathname, url, env);
+    if (request.method === "POST") return await handleWrite(request, url.pathname, env);
+    if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: { allow: "GET,POST,OPTIONS" } });
+    return json({ ok: false, error: "method_not_allowed" }, 405);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    const status = message === "invalid_json" ? 400 : 500;
+    return json({ ok: false, error: message }, status);
+  }
+}
+
+export const __test = { stable, sha256 };

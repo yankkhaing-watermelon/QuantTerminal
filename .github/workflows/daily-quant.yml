@@ -1,0 +1,46 @@
+name: Daily Quant Publication
+
+on:
+  workflow_dispatch:
+    inputs:
+      max_symbols:
+        description: "Development limit; leave 0 for all Bursa stocks"
+        required: false
+        default: "0"
+  schedule:
+    - cron: "45 11 * * 1-5"
+
+concurrency:
+  group: daily-quant-publication
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Run full-universe quant engine
+        env:
+          MAX_SYMBOLS: ${{ inputs.max_symbols || '0' }}
+          PORTFOLIO_SYMBOLS: ${{ vars.PORTFOLIO_SYMBOLS }}
+        run: python scripts/run_quant.py --output artifacts/latest --max-symbols "$MAX_SYMBOLS"
+      - name: Publish research archive and terminal payload
+        env:
+          QUANT_API_BASE: ${{ secrets.QUANT_API_BASE }}
+          PUBLISH_TOKEN: ${{ secrets.PUBLISH_TOKEN }}
+        run: python scripts/publish.py --artifacts artifacts/latest
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: quant-artifacts-${{ github.run_id }}
+          path: artifacts/latest
+          retention-days: 14
