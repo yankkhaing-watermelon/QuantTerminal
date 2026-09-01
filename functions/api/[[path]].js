@@ -193,7 +193,16 @@ async function handleRead(path, url, env) {
       const result = await db.prepare("PRAGMA table_info(quant_runs)").all();
       columns = (result.results || []).map((row) => String(row.name));
     }
-    return json({ ok: true, service: "bursa-musangking-quant-terminal", version: "5.0.6", db_bound: true, quant_runs_type: table?.type || null, quant_runs_columns: columns });
+    return json({
+      ok: true,
+      service: "bursa-musangking-quant-terminal",
+      version: "5.0.7",
+      db_bound: true,
+      manual_run_configured: Boolean(env.MANUAL_RUN_KEY),
+      github_trigger_configured: Boolean(env.GITHUB_TOKEN),
+      quant_runs_type: table?.type || null,
+      quant_runs_columns: columns,
+    });
   }
 
   await ensureSchema(db);
