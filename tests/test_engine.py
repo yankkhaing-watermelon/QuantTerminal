@@ -42,33 +42,29 @@ class EngineTests(unittest.TestCase):
         self.assertGreaterEqual(_rsi(values), 0)
         self.assertLessEqual(_rsi(values), 100)
 
-    def test_tradingview_is_primary_and_yahoo_only_receives_unresolved_symbols(self):
+    def test_market_data_is_tradingview_only(self):
         universe = (
             Security("0001", "One", "Test", 1, "ONE"),
             Security("0002", "Two", "Test", 1, "TWO"),
         )
         dates = pd.date_range("2025-01-01", periods=230, freq="B")
         tv_frame = self._price_frame(dates)
-        yahoo_frame = self._price_frame(dates)
-        with (
-            patch("bmk_quant.engine._download_tradingview_prices", return_value={"0001": tv_frame}) as tv,
-            patch("bmk_quant.engine._download_yahoo_prices", return_value={"0002": yahoo_frame}) as yahoo,
-        ):
+        with patch("bmk_quant.engine._download_tradingview_prices", return_value={"0001": tv_frame}) as tv:
             result = _download_prices(universe)
         tv.assert_called_once_with(universe)
-        yahoo.assert_called_once_with((universe[1],))
-        self.assertEqual(set(result), {"0001", "0002"})
+        self.assertEqual(set(result), {"0001"})
 
     def test_tradingview_is_primary_for_benchmark(self):
         dates = pd.date_range("2025-01-01", periods=230, freq="B")
         expected = pd.Series(range(230), index=dates, dtype=float)
-        with (
-            patch("bmk_quant.engine._download_tradingview_benchmark", return_value=expected),
-            patch("bmk_quant.engine._yfinance_download") as yahoo,
-        ):
+        with patch("bmk_quant.engine._download_tradingview_benchmark", return_value=expected):
             result = _benchmark()
-        yahoo.assert_not_called()
         pd.testing.assert_series_equal(result, expected)
+
+    def test_benchmark_fails_closed_without_tradingview(self):
+        with patch("bmk_quant.engine._download_tradingview_benchmark", return_value=None):
+            with self.assertRaisesRegex(RuntimeError, "tradingview_benchmark"):
+                _benchmark()
 
     def test_strict_session_gate_still_rejects_stale_price_frames(self):
         dates = pd.date_range("2025-01-01", periods=230, freq="B")
