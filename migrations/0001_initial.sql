@@ -39,4 +39,10 @@ CREATE TABLE IF NOT EXISTS portfolio_rows (
   row_json TEXT NOT NULL,
   PRIMARY KEY (run_id, symbol)
 );
+
+CREATE TABLE IF NOT EXISTS manual_run_requests (
+  request_id TEXT PRIMARY KEY,
+  requested_at_epoch INTEGER NOT NULL,
+  status TEXT NOT NULL DEFAULT 'queued'
+);
 CREATE INDEX IF NOT EXISTS idx_portfolio_rows_run ON portfolio_rows(run_id);
