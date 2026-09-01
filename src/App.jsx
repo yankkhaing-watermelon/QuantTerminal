@@ -142,26 +142,19 @@ export default function App() {
   }, []);
   const startRun = async () => {
     if (["authorizing", "queued", "scanning"].includes(runState)) return;
-    let key = sessionStorage.getItem("quant-manual-run-key") || "";
-    if (!key) key = window.prompt("Enter the private manual run key") || "";
-    if (!key) return;
-
     setRunState("authorizing");
-    setRunMessage("Authorizing manual scan…");
+    setRunMessage("Requesting full Bursa scan…");
     const previousRunId = data.run_id;
     const previousGeneratedAt = data.generated_at;
     try {
-      const response = await fetch("/api/run", { method: "POST", headers: { "x-manual-run-key": key } });
+      const response = await fetch("/api/run", { method: "POST" });
       const body = await response.json().catch(() => ({}));
       if (!response.ok) {
-        if (response.status === 401) sessionStorage.removeItem("quant-manual-run-key");
         if (body.error === "run_cooldown") throw new Error(`A scan was already requested. Try again in ${body.retry_after || 300} seconds.`);
-        if (body.error === "invalid_manual_run_key") throw new Error("The manual run key is incorrect.");
         if (body.error === "github_token_not_configured") throw new Error("Cloudflare is missing the GitHub trigger token.");
         throw new Error("The scan could not be queued.");
       }
 
-      sessionStorage.setItem("quant-manual-run-key", key);
       setRunState("queued");
       setRunMessage("Scan queued · waiting for publication…");
       for (let attempt = 0; attempt < 80; attempt += 1) {
@@ -192,5 +185,5 @@ export default function App() {
   const solidOrange = { background: "#fb8b1e", backgroundImage: "none", border: 0, boxShadow: "none", outline: 0, color: "#000000", WebkitAppearance: "none", appearance: "none" };
   const runBusy = ["authorizing", "queued", "scanning"].includes(runState);
   const runLabel = runState === "authorizing" ? "CHECK" : runState === "queued" ? "QUEUED" : runState === "scanning" ? "RUNNING" : runState === "published" ? "DONE" : "RUN";
-  return <div className="app-shell"><header><div className="brand"><div className="brand-mark-orange" style={solidOrange}>BMK</div><div><span>BURSA MALAYSIA · QUANT</span><h1>MusangKing Terminal</h1></div></div><div className="header-meta"><button type="button" className={`run-button-orange ${runState}`} style={solidOrange} onClick={startRun} disabled={runBusy} aria-label="Run full Bursa quant scan"><span aria-hidden="true">▶</span>{runLabel}</button><div className={`date-pill ${status === "live" ? "live" : ""}`}><i />{data.scan_date || "—"}</div><button className="theme" onClick={() => setTheme(theme === "dark" ? "light" : "dark")} aria-label="Toggle theme">{theme === "dark" ? "☀" : "◐"}</button></div></header><div className={`public-notice ${runState}`}>{runMessage || "Public dashboard · data is read-only · RUN is protected by your private manual key"}</div><nav aria-label="Terminal sections">{TABS.map((tab) => <button key={tab} className={active === tab ? "active" : ""} onClick={() => setActive(tab)}><span aria-hidden="true">{NAV_META[tab].icon}</span><strong>{NAV_META[tab].label}</strong></button>)}</nav><main><div className={`page-title ${active === "Rankings" ? "ranking-title" : ""}`}><div><span className="eyebrow">{data.market || "MYX"} · {data.benchmark || "^KLSE"}</span><h2>{NAV_META[active].label}</h2></div><div className="updated"><span>LAST UPDATED</span><b>{dateTime(data.generated_at)}</b></div></div>{status !== "live" && <div className={`notice ${status}`}>{status === "loading" ? "Connecting to Quant API…" : status === "empty" ? "Deployment is ready. Waiting for the first daily quant publication." : "Quant API is unavailable. The interface remains ready and will reconnect on reload."}</div>}<Page data={data}/></main><footer><span>Bursa MusangKing Quant Terminal v5.0 · Phases 1–15</span><span>Research and ranking output only. No profitability is guaranteed.</span></footer></div>;
+  return <div className="app-shell"><header><div className="brand"><div className="brand-mark-orange" style={solidOrange}>BMK</div><div><span>BURSA MALAYSIA · QUANT</span><h1>MusangKing Terminal</h1></div></div><div className="header-meta"><button type="button" className={`run-button-orange ${runState}`} style={solidOrange} onClick={startRun} disabled={runBusy} aria-label="Run full Bursa quant scan"><span aria-hidden="true">▶</span>{runLabel}</button><div className={`date-pill ${status === "live" ? "live" : ""}`}><i />{data.scan_date || "—"}</div><button className="theme" onClick={() => setTheme(theme === "dark" ? "light" : "dark")} aria-label="Toggle theme">{theme === "dark" ? "☀" : "◐"}</button></div></header><div className={`public-notice ${runState}`}>{runMessage || "Public dashboard · data is read-only · RUN starts the full Bursa workflow directly"}</div><nav aria-label="Terminal sections">{TABS.map((tab) => <button key={tab} className={active === tab ? "active" : ""} onClick={() => setActive(tab)}><span aria-hidden="true">{NAV_META[tab].icon}</span><strong>{NAV_META[tab].label}</strong></button>)}</nav><main><div className={`page-title ${active === "Rankings" ? "ranking-title" : ""}`}><div><span className="eyebrow">{data.market || "MYX"} · {data.benchmark || "^KLSE"}</span><h2>{NAV_META[active].label}</h2></div><div className="updated"><span>LAST UPDATED</span><b>{dateTime(data.generated_at)}</b></div></div>{status !== "live" && <div className={`notice ${status}`}>{status === "loading" ? "Connecting to Quant API…" : status === "empty" ? "Deployment is ready. Waiting for the first daily quant publication." : "Quant API is unavailable. The interface remains ready and will reconnect on reload."}</div>}<Page data={data}/></main><footer><span>Bursa MusangKing Quant Terminal v5.0 · Phases 1–15</span><span>Research and ranking output only. No profitability is guaranteed.</span></footer></div>;
 }
