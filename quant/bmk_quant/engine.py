@@ -20,26 +20,13 @@ from .universe import Security, get_universe
 
 MIN_BARS = 220
 MIN_UNIVERSE = int(os.getenv("MIN_UNIVERSE", "900"))
-# Yahoo can throttle nested parallel requests. Keep our own concurrency small
-# and disable yfinance's internal thread pool. Smaller batches also make
-# partial provider responses recoverable without discarding the whole batch.
-BATCH_SIZE = int(os.getenv("YF_BATCH_SIZE", "30"))
-MAX_WORKERS = int(os.getenv("YF_MAX_WORKERS", "2"))
-DOWNLOAD_RETRIES = int(os.getenv("YF_DOWNLOAD_RETRIES", "3"))
-RETRY_BACKOFF_SECONDS = float(os.getenv("YF_RETRY_BACKOFF", "2"))
+RETRY_BACKOFF_SECONDS = float(os.getenv("TV_RETRY_BACKOFF", "2"))
 TV_BARS = int(os.getenv("TV_BARS", "300"))
 TV_MAX_WORKERS = int(os.getenv("TV_MAX_WORKERS", "3"))
 TV_CONNECT_GAP = float(os.getenv("TV_CONNECT_GAP", "0.25"))
 _tv_connect_lock = threading.Lock()
 _tv_next_connect = 0.0
 _tv_thread = threading.local()
-
-
-def _yfinance_download(*args, **kwargs):
-    """Import Yahoo lazily because it is a fallback, not a startup requirement."""
-    import yfinance as yf
-    return yf.download(*args, **kwargs)
-
 
 def _finite(value: float | int | np.number | None, digits: int = 6):
     if value is None or not math.isfinite(float(value)):
@@ -65,13 +52,12 @@ def _percentile(series: pd.Series, higher_is_better: bool = True) -> pd.Series:
 
 
 def _extract_price_frame(raw: pd.DataFrame, ticker: str) -> pd.DataFrame | None:
-    """Normalize one ticker from a TradingView or yfinance response."""
+    """Normalize one ticker from a TradingView response."""
     try:
         if raw is None or raw.empty:
             return None
         if isinstance(raw.columns, pd.MultiIndex):
-            # yfinance normally returns ticker-first columns for group_by=ticker,
-            # but tolerate field-first output as well.
+            # Tolerate either field-first or ticker-first multi-index output.
             if ticker in raw.columns.get_level_values(0):
                 frame = raw[ticker]
             elif ticker in raw.columns.get_level_values(-1):
@@ -96,117 +82,6 @@ def _extract_price_frame(raw: pd.DataFrame, ticker: str) -> pd.DataFrame | None:
         return frame
     except (KeyError, TypeError, ValueError, IndexError):
         return None
-
-
-def _download_once(tickers: list[str]) -> tuple[dict[str, pd.DataFrame], set[str]]:
-    """Download a batch once and return usable frames plus unresolved tickers."""
-    raw = _yfinance_download(
-        tickers=tickers,
-        period="18mo",
-        interval="1d",
-        auto_adjust=False,
-        actions=False,
-        group_by="ticker",
-        # Do not nest yfinance's threads inside our executor.
-        threads=False,
-        progress=False,
-        timeout=30,
-    )
-    result: dict[str, pd.DataFrame] = {}
-    unresolved: set[str] = set()
-    for ticker in tickers:
-        frame = _extract_price_frame(raw, ticker)
-        if frame is None or len(frame) < MIN_BARS:
-            unresolved.add(ticker)
-            continue
-        result[ticker] = frame
-    return result, unresolved
-
-
-def _download_single(ticker: str) -> pd.DataFrame | None:
-    """Last-resort single-symbol request for a transient batch failure."""
-    try:
-        raw = _yfinance_download(
-            tickers=ticker,
-            period="18mo",
-            interval="1d",
-            auto_adjust=False,
-            actions=False,
-            group_by="ticker",
-            threads=False,
-            progress=False,
-            timeout=30,
-        )
-        frame = _extract_price_frame(raw, ticker)
-        if frame is not None and len(frame) >= MIN_BARS:
-            return frame
-    except Exception:  # noqa: BLE001 - one provider failure must not abort the universe
-        pass
-    return None
-
-
-def _download_chunk(securities: list[Security]) -> dict[str, pd.DataFrame]:
-    """Resiliently download one universe chunk without letting partial Yahoo responses erase it."""
-    ticker_by_symbol = {security.symbol: f"{security.symbol}.KL" for security in securities}
-    pending = list(ticker_by_symbol.values())
-    result_by_ticker: dict[str, pd.DataFrame] = {}
-
-    for attempt in range(1, DOWNLOAD_RETRIES + 1):
-        if not pending:
-            break
-        try:
-            frames, unresolved = _download_once(pending)
-            result_by_ticker.update(frames)
-            pending = [ticker for ticker in pending if ticker in unresolved]
-        except Exception:  # noqa: BLE001 - retry the affected batch
-            pass
-        if pending and attempt < DOWNLOAD_RETRIES:
-            time.sleep(RETRY_BACKOFF_SECONDS * attempt)
-
-    # If a batch is still partially unresolved, retry the remainder in small
-    # serial sub-batches. This is the key protection against transient Yahoo
-    # partial responses that previously left the full-universe run with only a
-    # handful of frames (for example 71/1000+).
-    if pending:
-        for start in range(0, len(pending), 5):
-            sub_pending = pending[start:start + 5]
-            for attempt in range(1, 3):
-                try:
-                    frames, unresolved = _download_once(sub_pending)
-                    result_by_ticker.update(frames)
-                    sub_pending = [ticker for ticker in sub_pending if ticker in unresolved]
-                except Exception:  # noqa: BLE001
-                    pass
-                if not sub_pending or attempt == 2:
-                    break
-                time.sleep(RETRY_BACKOFF_SECONDS * attempt)
-
-            # Absolute last resort: individual requests for anything still
-            # unresolved. Invalid/delisted symbols will simply remain absent.
-            for ticker in sub_pending:
-                frame = _download_single(ticker)
-                if frame is not None:
-                    result_by_ticker[ticker] = frame
-
-    return {
-        security.symbol: result_by_ticker[ticker_by_symbol[security.symbol]]
-        for security in securities
-        if ticker_by_symbol[security.symbol] in result_by_ticker
-    }
-
-
-def _download_yahoo_prices(universe: tuple[Security, ...]) -> dict[str, pd.DataFrame]:
-    chunks = [list(universe[index:index + BATCH_SIZE]) for index in range(0, len(universe), BATCH_SIZE)]
-    prices: dict[str, pd.DataFrame] = {}
-    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as pool:
-        futures = [pool.submit(_download_chunk, chunk) for chunk in chunks]
-        for future in as_completed(futures):
-            try:
-                prices.update(future.result())
-            except Exception as exc:  # noqa: BLE001 - one batch must never kill the full universe
-                print(f"Yahoo batch failed and was skipped: {type(exc).__name__}: {exc}")
-    print(f"Yahoo fallback coverage: {len(prices)}/{len(universe)} frames with >= {MIN_BARS} bars")
-    return prices
 
 
 def _new_tv_client():
@@ -253,7 +128,7 @@ def _download_tradingview_security(security: Security) -> pd.DataFrame | None:
             if frame is not None and len(frame) >= MIN_BARS:
                 return frame
             empty_responses += 1
-        except Exception:  # noqa: BLE001 - unresolved symbols continue to Yahoo
+        except Exception:  # noqa: BLE001 - one unresolved symbol must not abort the universe
             pass
         if empty_responses >= 2:
             break
@@ -284,16 +159,9 @@ def _download_tradingview_prices(universe: tuple[Security, ...]) -> dict[str, pd
 
 
 def _download_prices(universe: tuple[Security, ...]) -> dict[str, pd.DataFrame]:
-    primary = _download_tradingview_prices(universe)
-    unresolved = tuple(security for security in universe if security.symbol not in primary)
-    print(f"TradingView primary complete: usable={len(primary)}/{len(universe)}; Yahoo fallback required={len(unresolved)}")
-    fallback = _download_yahoo_prices(unresolved) if unresolved else {}
-    primary.update(fallback)
-    print(
-        f"Market data complete: usable={len(primary)}/{len(universe)} "
-        f"(TradingView={len(primary) - len(fallback)}, Yahoo={len(fallback)})"
-    )
-    return primary
+    prices = _download_tradingview_prices(universe)
+    print(f"TradingView-only market data complete: usable={len(prices)}/{len(universe)}")
+    return prices
 
 
 def _download_tradingview_benchmark() -> pd.Series | None:
@@ -312,7 +180,7 @@ def _download_tradingview_benchmark() -> pd.Series | None:
             frame = _extract_price_frame(raw, "FBMKLCI")
             if frame is not None and len(frame) >= MIN_BARS:
                 return frame["Close"].astype(float).dropna()
-        except Exception:  # noqa: BLE001 - Yahoo remains the benchmark fallback
+        except Exception:  # noqa: BLE001 - retry the TradingView benchmark
             pass
         if attempt < 2:
             time.sleep(min(8.0, RETRY_BACKOFF_SECONDS * (attempt + 1)))
@@ -324,23 +192,7 @@ def _benchmark() -> pd.Series:
     if tradingview is not None and len(tradingview) >= MIN_BARS:
         print(f"TradingView benchmark coverage: {len(tradingview)} bars")
         return tradingview
-    print("TradingView benchmark unavailable; trying Yahoo fallback")
-    for attempt in range(3):
-        try:
-            raw = _yfinance_download("^KLSE", period="18mo", interval="1d", auto_adjust=False, actions=False, progress=False, timeout=30)
-            close = raw.get("Close")
-            if isinstance(close, pd.DataFrame):
-                close = close.iloc[:, 0]
-            if close is not None:
-                close = close.dropna()
-                close.index = pd.to_datetime(close.index).tz_localize(None)
-                if len(close) >= MIN_BARS:
-                    return close
-        except Exception:
-            pass
-        if attempt < 2:
-            time.sleep(RETRY_BACKOFF_SECONDS * (attempt + 1))
-    raise RuntimeError("benchmark_unavailable_or_short")
+    raise RuntimeError("tradingview_benchmark_unavailable_or_short")
 
 
 def _features(security: Security, frame: pd.DataFrame, benchmark: pd.Series, completed_session: pd.Timestamp) -> dict | None:
