@@ -25,6 +25,7 @@ const DEMO_DATA = {
 
 const num = (value, digits = 1) => Number.isFinite(Number(value)) ? Number(value).toFixed(digits) : "—";
 const pct = (value, digits = 1) => Number.isFinite(Number(value)) ? `${Number(value).toFixed(digits)}%` : "—";
+const money = (value) => Number.isFinite(Number(value)) ? `RM ${Number(value).toFixed(Number(value) < 1 ? 3 : 2)}` : "RM —";
 const dateTime = (value) => value ? new Intl.DateTimeFormat("en-MY", { dateStyle: "medium", timeStyle: "short", timeZone: "Asia/Kuala_Lumpur" }).format(new Date(value)) : "Awaiting first publication";
 const tone = (value) => Number(value) > 0 ? "up" : Number(value) < 0 ? "down" : "flat";
 
@@ -56,8 +57,16 @@ function StockTable({ rows, compact = false }) {
 }
 
 function RankingList({ rows }) {
+  const [selected, setSelected] = useState(null);
+  useEffect(() => {
+    if (!selected) return undefined;
+    const closeOnEscape = (event) => { if (event.key === "Escape") setSelected(null); };
+    document.addEventListener("keydown", closeOnEscape);
+    return () => document.removeEventListener("keydown", closeOnEscape);
+  }, [selected]);
   if (!rows.length) return <Empty title="No matching ranked stocks" text="Adjust the search, sector, or score filters." />;
-  return <div className="ranking-list">{rows.map((row, index) => <article className="ranking-row" key={row.symbol}><span className="ranking-number">{String(index + 1).padStart(3, "0")}</span><div className="ranking-name"><strong>{row.tv_symbol || row.symbol}</strong><span>{row.name || row.sector || "Bursa Malaysia"}</span></div><div className="ranking-factor"><small>TRD</small><b>{num(row.trend_score, 0)}</b><i style={{ width: `${Math.max(0, Math.min(100, Number(row.trend_score) || 0))}%` }} /></div><div className="ranking-factor"><small>MOM</small><b>{num(row.momentum_score, 0)}</b><i style={{ width: `${Math.max(0, Math.min(100, Number(row.momentum_score) || 0))}%` }} /></div><span className={`ranking-score ${Number(row.quant_score) >= 80 ? "elite" : ""}`}>{num(row.quant_score, 1)}</span><span className="ranking-chevron" aria-hidden="true">›</span></article>)}</div>;
+  const openDetails = (row) => setSelected(row);
+  return <><div className="ranking-list">{rows.map((row, index) => <article className="ranking-row" key={row.symbol} role="button" tabIndex="0" aria-label={`View ${row.symbol} details, latest price ${money(row.close)}`} onClick={() => openDetails(row)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); openDetails(row); } }}><span className="ranking-number">{String(index + 1).padStart(3, "0")}</span><div className="ranking-name"><strong>{row.tv_symbol || row.symbol}</strong><span>{row.name || row.sector || "Bursa Malaysia"}</span><em className="ranking-price">{money(row.close)}</em></div><div className="ranking-factor"><small>TRD</small><b>{num(row.trend_score, 0)}</b><i style={{ width: `${Math.max(0, Math.min(100, Number(row.trend_score) || 0))}%` }} /></div><div className="ranking-factor"><small>MOM</small><b>{num(row.momentum_score, 0)}</b><i style={{ width: `${Math.max(0, Math.min(100, Number(row.momentum_score) || 0))}%` }} /></div><span className={`ranking-score ${Number(row.quant_score) >= 80 ? "elite" : ""}`}>{num(row.quant_score, 1)}</span><span className="ranking-chevron" aria-hidden="true">›</span></article>)}</div>{selected && <div className="stock-detail-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setSelected(null); }}><section className="stock-detail" role="dialog" aria-modal="true" aria-labelledby="stock-detail-title"><div className="stock-detail-head"><div><span>{selected.symbol}</span><h3 id="stock-detail-title">{selected.name || selected.sector || "Bursa Malaysia"}</h3></div><button type="button" onClick={() => setSelected(null)} aria-label="Close stock details">×</button></div><div className="stock-detail-price"><span>Latest closing price</span><strong>{money(selected.close)}</strong><small>Market date {selected.last_bar || "—"}</small></div><dl><dt>Quant score</dt><dd>{num(selected.quant_score, 1)}</dd><dt>Expected edge</dt><dd className={tone(selected.expected_edge)}>{pct(selected.expected_edge, 2)}</dd><dt>Confidence</dt><dd>{pct(selected.confidence, 0)}</dd><dt>RS 20D</dt><dd className={tone(selected.rs_20d)}>{pct(selected.rs_20d, 2)}</dd><dt>RSI</dt><dd>{num(selected.rsi, 1)}</dd><dt>ATR</dt><dd>{money(selected.atr)}</dd><dt>Model decision</dt><dd><Badge kind={String(selected.action || "WATCH").toLowerCase()}>{selected.action || "WATCH"}</Badge></dd></dl></section></div>}</>;
 }
 
 function Overview({ data }) {
