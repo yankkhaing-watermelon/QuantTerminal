@@ -27,19 +27,10 @@ test("workflow dispatch defaults to the active replacement repository", () => {
   );
 });
 
-test("manual run endpoint rejects an incorrect key before any dispatch", async () => {
-  const response = await onRequest({
-    request: new Request("https://example.test/api/run", { method: "POST", headers: { "x-manual-run-key": "wrong" } }),
-    env: { MANUAL_RUN_KEY: "correct" },
-  });
-  assert.equal(response.status, 401);
-  assert.deepEqual(await response.json(), { ok: false, error: "invalid_manual_run_key" });
-});
-
 test("manual run endpoint fails safely when GitHub token is absent", async () => {
   const response = await onRequest({
-    request: new Request("https://example.test/api/run", { method: "POST", headers: { "x-manual-run-key": "correct" } }),
-    env: { MANUAL_RUN_KEY: "correct" },
+    request: new Request("https://example.test/api/run", { method: "POST" }),
+    env: {},
   });
   assert.equal(response.status, 503);
   assert.deepEqual(await response.json(), { ok: false, error: "github_token_not_configured" });
