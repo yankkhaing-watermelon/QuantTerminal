@@ -7,11 +7,31 @@ import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "quant"))
 
-from bmk_quant.engine import _assign_quant_sextiles, _backtest, _percentile, _portfolio, _rsi  # noqa: E402
+from bmk_quant.engine import (  # noqa: E402
+    _assign_quant_sextiles,
+    _backtest,
+    _benchmark,
+    _download_prices,
+    _features,
+    _percentile,
+    _portfolio,
+    _rsi,
+)
 from bmk_quant.universe import Security  # noqa: E402
 
 
 class EngineTests(unittest.TestCase):
+    @staticmethod
+    def _price_frame(dates):
+        close = pd.Series([100 + index for index in range(len(dates))], index=dates, dtype=float)
+        return pd.DataFrame({
+            "Open": close * 0.995,
+            "High": close * 1.01,
+            "Low": close * 0.99,
+            "Close": close,
+            "Volume": 1_000_000,
+        })
+
     def test_percentile_direction(self):
         values = pd.Series([10.0, 20.0, 30.0])
         self.assertGreater(_percentile(values).iloc[-1], _percentile(values).iloc[0])
@@ -21,6 +41,41 @@ class EngineTests(unittest.TestCase):
         values = pd.Series([100 + index * 0.3 + (index % 3) * 0.1 for index in range(40)])
         self.assertGreaterEqual(_rsi(values), 0)
         self.assertLessEqual(_rsi(values), 100)
+
+    def test_tradingview_is_primary_and_yahoo_only_receives_unresolved_symbols(self):
+        universe = (
+            Security("0001", "One", "Test", 1, "ONE"),
+            Security("0002", "Two", "Test", 1, "TWO"),
+        )
+        dates = pd.date_range("2025-01-01", periods=230, freq="B")
+        tv_frame = self._price_frame(dates)
+        yahoo_frame = self._price_frame(dates)
+        with (
+            patch("bmk_quant.engine._download_tradingview_prices", return_value={"0001": tv_frame}) as tv,
+            patch("bmk_quant.engine._download_yahoo_prices", return_value={"0002": yahoo_frame}) as yahoo,
+        ):
+            result = _download_prices(universe)
+        tv.assert_called_once_with(universe)
+        yahoo.assert_called_once_with((universe[1],))
+        self.assertEqual(set(result), {"0001", "0002"})
+
+    def test_tradingview_is_primary_for_benchmark(self):
+        dates = pd.date_range("2025-01-01", periods=230, freq="B")
+        expected = pd.Series(range(230), index=dates, dtype=float)
+        with (
+            patch("bmk_quant.engine._download_tradingview_benchmark", return_value=expected),
+            patch("bmk_quant.engine._yfinance_download") as yahoo,
+        ):
+            result = _benchmark()
+        yahoo.assert_not_called()
+        pd.testing.assert_series_equal(result, expected)
+
+    def test_strict_session_gate_still_rejects_stale_price_frames(self):
+        dates = pd.date_range("2025-01-01", periods=230, freq="B")
+        benchmark = pd.Series(range(230), index=dates, dtype=float)
+        stale = self._price_frame(dates[:-1])
+        row = _features(Security("0001", "One", "Test", 1, "ONE"), stale, benchmark, dates[-1])
+        self.assertIsNone(row)
 
     def test_portfolio_respects_neutral_exposure_and_single_name_caps(self):
         rows = [
