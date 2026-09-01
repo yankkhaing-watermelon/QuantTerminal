@@ -74,6 +74,11 @@ nav button{padding:9px 14px}.page-title{margin-bottom:10px}.page-title h2{font-s
   font-size:13px;font-weight:900;text-decoration:none;letter-spacing:.01em
 }
 .run-button-orange span{font-size:12px}
+.run-button-orange:disabled{cursor:wait;opacity:.72}
+.run-button-orange.queued,.run-button-orange.scanning{min-width:104px}
+.public-notice.queued,.public-notice.scanning{color:#fb8b1e}
+.public-notice.published{color:#4af6c3}
+.public-notice.error{color:#ff6b66}
 .brand-mark-orange:focus,.brand-mark-orange:focus-visible,.run-button-orange:focus,.run-button-orange:focus-visible{border:0!important;outline:0!important;box-shadow:none!important}
 .brand-mark,.run-button,.run-button:hover,.run-button:active,.run-button:visited{
   background:#fb8b1e!important;
@@ -100,6 +105,7 @@ nav button{padding:9px 14px}.page-title{margin-bottom:10px}.page-title h2{font-s
   .brand-mark-orange{width:35px;height:38px;flex-basis:35px;border-radius:8px;font-size:11px}
   .run-button-orange{min-width:56px;min-height:36px;padding:0 7px;border-radius:7px;font-size:9px}
   .run-button-orange span{font-size:9px}
+  .run-button-orange.queued,.run-button-orange.scanning{min-width:65px;font-size:7px}
   .position-head h4,.research-identity h4{font-size:9px}
   .position-head h4+span,.research-identity strong{font-size:14px}
   .position-head h4+span{max-width:205px}
