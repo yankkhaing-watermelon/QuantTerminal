@@ -34,6 +34,18 @@ async function authorized(request, env) {
   return secureEqual(token, env.PUBLISH_TOKEN);
 }
 
+async function manualRunAuthorized(request, env) {
+  if (!env.MANUAL_RUN_KEY) return false;
+  return secureEqual(request.headers.get("x-manual-run-key") || "", env.MANUAL_RUN_KEY);
+}
+
+function workflowDispatchUrl(env) {
+  const owner = env.GITHUB_OWNER || "yankkhaing-watermelon";
+  const repository = env.GITHUB_REPOSITORY || "QuantTerminal";
+  const workflow = env.GITHUB_WORKFLOW || "daily-quant.yml";
+  return `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repository)}/actions/workflows/${encodeURIComponent(workflow)}/dispatches`;
+}
+
 async function tableColumns(db, table) {
   const result = await db.prepare(`PRAGMA table_info(${table})`).all();
   return new Set((result.results || []).map((row) => String(row.name)));
@@ -54,6 +66,7 @@ async function ensureSchema(db) {
   await db.prepare("CREATE TABLE IF NOT EXISTS research_archives (run_id TEXT PRIMARY KEY, status TEXT NOT NULL DEFAULT 'started', expected_symbols INTEGER NOT NULL DEFAULT 0, received_symbols INTEGER NOT NULL DEFAULT 0, payload_hash TEXT, updated_at TEXT NOT NULL DEFAULT '')").run();
   await db.prepare("CREATE TABLE IF NOT EXISTS research_rows (run_id TEXT NOT NULL, symbol TEXT NOT NULL, row_json TEXT NOT NULL DEFAULT '{}', PRIMARY KEY (run_id, symbol))").run();
   await db.prepare("CREATE TABLE IF NOT EXISTS portfolio_rows (run_id TEXT NOT NULL, symbol TEXT NOT NULL, row_hash TEXT NOT NULL DEFAULT '', row_json TEXT NOT NULL DEFAULT '{}', PRIMARY KEY (run_id, symbol))").run();
+  await db.prepare("CREATE TABLE IF NOT EXISTS manual_run_requests (request_id TEXT PRIMARY KEY, requested_at_epoch INTEGER NOT NULL, status TEXT NOT NULL DEFAULT 'queued')").run();
 
   // The connected production D1 has a legacy quant_runs table whose primary
   // key is named `id` rather than `run_id`. ALTER TABLE cannot add a new
@@ -102,6 +115,39 @@ async function ensureSchema(db) {
   if ((await tableColumns(db, "portfolio_rows")).has("run_id")) {
     await db.prepare("CREATE INDEX IF NOT EXISTS idx_portfolio_rows_run ON portfolio_rows(run_id)").run();
   }
+}
+
+async function handleManualRun(request, env) {
+  if (!(await manualRunAuthorized(request, env))) return json({ ok: false, error: "invalid_manual_run_key" }, 401);
+  if (!env.GITHUB_TOKEN) return json({ ok: false, error: "github_token_not_configured" }, 503);
+
+  const db = getDb(env);
+  await ensureSchema(db);
+  const now = Math.floor(Date.now() / 1000);
+  const cooldown = Math.max(60, Number(env.RUN_COOLDOWN_SECONDS || 300));
+  const last = await db.prepare("SELECT requested_at_epoch FROM manual_run_requests ORDER BY requested_at_epoch DESC LIMIT 1").first();
+  const elapsed = now - Number(last?.requested_at_epoch || 0);
+  if (last && elapsed < cooldown) {
+    return json({ ok: false, error: "run_cooldown", retry_after: cooldown - elapsed }, 409);
+  }
+
+  const response = await fetch(workflowDispatchUrl(env), {
+    method: "POST",
+    headers: {
+      accept: "application/vnd.github+json",
+      authorization: `Bearer ${env.GITHUB_TOKEN}`,
+      "content-type": "application/json",
+      "user-agent": "bursa-musangking-quant-terminal",
+      "x-github-api-version": "2022-11-28",
+    },
+    body: JSON.stringify({ ref: env.GITHUB_REF || "main", inputs: { max_symbols: "0" } }),
+  });
+  if (!response.ok) return json({ ok: false, error: "github_dispatch_failed", github_status: response.status }, 502);
+
+  const requestId = crypto.randomUUID();
+  await db.prepare("INSERT INTO manual_run_requests(request_id, requested_at_epoch, status) VALUES(?, ?, 'queued')")
+    .bind(requestId, now).run();
+  return json({ ok: true, state: "queued", request_id: requestId, poll_seconds: 15 }, 202);
 }
 
 function getDb(env) {
@@ -274,6 +320,7 @@ export async function onRequest(context) {
   const url = new URL(request.url);
   try {
     if (request.method === "GET") return await handleRead(url.pathname, url, env);
+    if (request.method === "POST" && url.pathname === "/api/run") return await handleManualRun(request, env);
     if (request.method === "POST") return await handleWrite(request, url.pathname, env);
     if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: { allow: "GET,POST,OPTIONS" } });
     return json({ ok: false, error: "method_not_allowed" }, 405);
@@ -284,4 +331,4 @@ export async function onRequest(context) {
   }
 }
 
-export const __test = { stable, sha256 };
+export const __test = { stable, sha256, secureEqual, workflowDispatchUrl };
