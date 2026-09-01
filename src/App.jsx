@@ -128,6 +128,8 @@ export default function App() {
   const [active, setActive] = useState("Overview");
   const [data, setData] = useState(DEMO_DATA);
   const [status, setStatus] = useState("loading");
+  const [runState, setRunState] = useState("idle");
+  const [runMessage, setRunMessage] = useState("");
   const [theme, setTheme] = useState(() => localStorage.getItem("quant-theme") || "dark");
   useEffect(() => { document.documentElement.dataset.theme = theme; localStorage.setItem("quant-theme", theme); }, [theme]);
   useEffect(() => {
@@ -138,8 +140,57 @@ export default function App() {
     }).catch(() => live && setStatus("offline"));
     return () => { live = false; };
   }, []);
+  const startRun = async () => {
+    if (["authorizing", "queued", "scanning"].includes(runState)) return;
+    let key = sessionStorage.getItem("quant-manual-run-key") || "";
+    if (!key) key = window.prompt("Enter the private manual run key") || "";
+    if (!key) return;
+
+    setRunState("authorizing");
+    setRunMessage("Authorizing manual scan…");
+    const previousRunId = data.run_id;
+    const previousGeneratedAt = data.generated_at;
+    try {
+      const response = await fetch("/api/run", { method: "POST", headers: { "x-manual-run-key": key } });
+      const body = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        if (response.status === 401) sessionStorage.removeItem("quant-manual-run-key");
+        if (body.error === "run_cooldown") throw new Error(`A scan was already requested. Try again in ${body.retry_after || 300} seconds.`);
+        if (body.error === "invalid_manual_run_key") throw new Error("The manual run key is incorrect.");
+        if (body.error === "github_token_not_configured") throw new Error("Cloudflare is missing the GitHub trigger token.");
+        throw new Error("The scan could not be queued.");
+      }
+
+      sessionStorage.setItem("quant-manual-run-key", key);
+      setRunState("queued");
+      setRunMessage("Scan queued · waiting for publication…");
+      for (let attempt = 0; attempt < 80; attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 15000));
+        setRunState("scanning");
+        setRunMessage("Scanning Bursa · this normally takes 6–10 minutes…");
+        const latestResponse = await fetch(`/api/latest?poll=${Date.now()}`, { cache: "no-store" });
+        if (!latestResponse.ok) continue;
+        const latestBody = await latestResponse.json();
+        const latest = latestBody.data;
+        if (latest && (latest.run_id !== previousRunId || latest.generated_at !== previousGeneratedAt)) {
+          setData(latest);
+          setStatus("live");
+          setRunState("published");
+          setRunMessage("New scan published successfully.");
+          window.setTimeout(() => { setRunState("idle"); setRunMessage(""); }, 8000);
+          return;
+        }
+      }
+      throw new Error("The scan is still running. Reload later to check the publication.");
+    } catch (error) {
+      setRunState("error");
+      setRunMessage(error instanceof Error ? error.message : "The scan could not be started.");
+    }
+  };
   const pages = { Overview, Rankings, Portfolio, Regime, Backtest, Performance, Research };
   const Page = pages[active];
   const solidOrange = { background: "#fb8b1e", backgroundImage: "none", border: 0, boxShadow: "none", outline: 0, color: "#000000", WebkitAppearance: "none", appearance: "none" };
-  return <div className="app-shell"><header><div className="brand"><div className="brand-mark-orange" style={solidOrange}>BMK</div><div><span>BURSA MALAYSIA · QUANT</span><h1>MusangKing Terminal</h1></div></div><div className="header-meta"><a className="run-button-orange" style={solidOrange} href="https://github.com/yankkhaing-watermelon/QuantTerminal/actions/workflows/daily-quant.yml" target="_blank" rel="noreferrer" aria-label="Open protected manual run workflow"><span aria-hidden="true">▶</span>RUN</a><div className={`date-pill ${status === "live" ? "live" : ""}`}><i />{data.scan_date || "—"}</div><button className="theme" onClick={() => setTheme(theme === "dark" ? "light" : "dark")} aria-label="Toggle theme">{theme === "dark" ? "☀" : "◐"}</button></div></header><div className="public-notice">Public dashboard · data is read-only · RUN remains protected by the private manual key</div><nav aria-label="Terminal sections">{TABS.map((tab) => <button key={tab} className={active === tab ? "active" : ""} onClick={() => setActive(tab)}><span aria-hidden="true">{NAV_META[tab].icon}</span><strong>{NAV_META[tab].label}</strong></button>)}</nav><main><div className={`page-title ${active === "Rankings" ? "ranking-title" : ""}`}><div><span className="eyebrow">{data.market || "MYX"} · {data.benchmark || "^KLSE"}</span><h2>{NAV_META[active].label}</h2></div><div className="updated"><span>LAST UPDATED</span><b>{dateTime(data.generated_at)}</b></div></div>{status !== "live" && <div className={`notice ${status}`}>{status === "loading" ? "Connecting to Quant API…" : status === "empty" ? "Deployment is ready. Waiting for the first daily quant publication." : "Quant API is unavailable. The interface remains ready and will reconnect on reload."}</div>}<Page data={data}/></main><footer><span>Bursa MusangKing Quant Terminal v5.0 · Phases 1–15</span><span>Research and ranking output only. No profitability is guaranteed.</span></footer></div>;
+  const runBusy = ["authorizing", "queued", "scanning"].includes(runState);
+  const runLabel = runState === "authorizing" ? "CHECK" : runState === "queued" ? "QUEUED" : runState === "scanning" ? "RUNNING" : runState === "published" ? "DONE" : "RUN";
+  return <div className="app-shell"><header><div className="brand"><div className="brand-mark-orange" style={solidOrange}>BMK</div><div><span>BURSA MALAYSIA · QUANT</span><h1>MusangKing Terminal</h1></div></div><div className="header-meta"><button type="button" className={`run-button-orange ${runState}`} style={solidOrange} onClick={startRun} disabled={runBusy} aria-label="Run full Bursa quant scan"><span aria-hidden="true">▶</span>{runLabel}</button><div className={`date-pill ${status === "live" ? "live" : ""}`}><i />{data.scan_date || "—"}</div><button className="theme" onClick={() => setTheme(theme === "dark" ? "light" : "dark")} aria-label="Toggle theme">{theme === "dark" ? "☀" : "◐"}</button></div></header><div className={`public-notice ${runState}`}>{runMessage || "Public dashboard · data is read-only · RUN is protected by your private manual key"}</div><nav aria-label="Terminal sections">{TABS.map((tab) => <button key={tab} className={active === tab ? "active" : ""} onClick={() => setActive(tab)}><span aria-hidden="true">{NAV_META[tab].icon}</span><strong>{NAV_META[tab].label}</strong></button>)}</nav><main><div className={`page-title ${active === "Rankings" ? "ranking-title" : ""}`}><div><span className="eyebrow">{data.market || "MYX"} · {data.benchmark || "^KLSE"}</span><h2>{NAV_META[active].label}</h2></div><div className="updated"><span>LAST UPDATED</span><b>{dateTime(data.generated_at)}</b></div></div>{status !== "live" && <div className={`notice ${status}`}>{status === "loading" ? "Connecting to Quant API…" : status === "empty" ? "Deployment is ready. Waiting for the first daily quant publication." : "Quant API is unavailable. The interface remains ready and will reconnect on reload."}</div>}<Page data={data}/></main><footer><span>Bursa MusangKing Quant Terminal v5.0 · Phases 1–15</span><span>Research and ranking output only. No profitability is guaranteed.</span></footer></div>;
 }
