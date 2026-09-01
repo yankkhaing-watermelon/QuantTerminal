@@ -88,6 +88,23 @@ In the GitHub repository, open **Settings → Secrets and variables → Actions*
 
 The secret protects write endpoints only. The public terminal never contains it.
 
+### 3A. Enable the in-app RUN button
+
+Create a fine-grained GitHub personal access token for `yankkhaing-watermelon/QuantTerminal` with **Actions: Read and write** permission. In Cloudflare Pages **Settings → Variables and Secrets**, add these encrypted secrets:
+
+- `GITHUB_TOKEN`: the fine-grained GitHub token
+- `MANUAL_RUN_KEY`: a separate private key that you will enter when pressing RUN
+
+Optional plain variables (the defaults already target this repository):
+
+- `GITHUB_OWNER=yankkhaing-watermelon`
+- `GITHUB_REPOSITORY=QuantTerminal`
+- `GITHUB_WORKFLOW=daily-quant.yml`
+- `GITHUB_REF=main`
+- `RUN_COOLDOWN_SECONDS=300`
+
+The PWA sends only `MANUAL_RUN_KEY` to Cloudflare. `GITHUB_TOKEN` remains server-side and is never included in the browser bundle. After Cloudflare redeploys, pressing RUN queues the full-universe workflow and polls `/api/latest` until the new publication appears.
+
 ### 4. Deploy and publish
 
 Cloudflare deploys automatically after a push to `main`. When deployment is green:
@@ -127,6 +144,7 @@ QUANT_API_BASE=https://your-project.pages.dev PUBLISH_TOKEN=... python scripts/p
 - `GET /api/latest`
 - `GET /api/history?limit=60`
 - `GET /api/research/:runId`
+- `POST /api/run` (requires `x-manual-run-key`)
 - `POST /api/admin/publish`
 - `POST /api/admin/runs/:runId/research/start`
 - `POST /api/admin/runs/:runId/research/batch`
