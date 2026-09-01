@@ -34,11 +34,6 @@ async function authorized(request, env) {
   return secureEqual(token, env.PUBLISH_TOKEN);
 }
 
-async function manualRunAuthorized(request, env) {
-  if (!env.MANUAL_RUN_KEY) return false;
-  return secureEqual(request.headers.get("x-manual-run-key") || "", env.MANUAL_RUN_KEY);
-}
-
 function workflowDispatchUrl(env) {
   const owner = env.GITHUB_OWNER || "yankkhaing-watermelon";
   const repository = env.GITHUB_REPOSITORY || "QuantTerminal";
@@ -117,14 +112,13 @@ async function ensureSchema(db) {
   }
 }
 
-async function handleManualRun(request, env) {
-  if (!(await manualRunAuthorized(request, env))) return json({ ok: false, error: "invalid_manual_run_key" }, 401);
+async function handleManualRun(env) {
   if (!env.GITHUB_TOKEN) return json({ ok: false, error: "github_token_not_configured" }, 503);
 
   const db = getDb(env);
   await ensureSchema(db);
   const now = Math.floor(Date.now() / 1000);
-  const cooldown = Math.max(60, Number(env.RUN_COOLDOWN_SECONDS || 300));
+  const cooldown = Math.max(300, Number(env.RUN_COOLDOWN_SECONDS || 900));
   const last = await db.prepare("SELECT requested_at_epoch FROM manual_run_requests ORDER BY requested_at_epoch DESC LIMIT 1").first();
   const elapsed = now - Number(last?.requested_at_epoch || 0);
   if (last && elapsed < cooldown) {
@@ -198,7 +192,6 @@ async function handleRead(path, url, env) {
       service: "bursa-musangking-quant-terminal",
       version: "5.0.7",
       db_bound: true,
-      manual_run_configured: Boolean(env.MANUAL_RUN_KEY),
       github_trigger_configured: Boolean(env.GITHUB_TOKEN),
       quant_runs_type: table?.type || null,
       quant_runs_columns: columns,
@@ -329,7 +322,7 @@ export async function onRequest(context) {
   const url = new URL(request.url);
   try {
     if (request.method === "GET") return await handleRead(url.pathname, url, env);
-    if (request.method === "POST" && url.pathname === "/api/run") return await handleManualRun(request, env);
+    if (request.method === "POST" && url.pathname === "/api/run") return await handleManualRun(env);
     if (request.method === "POST") return await handleWrite(request, url.pathname, env);
     if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: { allow: "GET,POST,OPTIONS" } });
     return json({ ok: false, error: "method_not_allowed" }, 405);
