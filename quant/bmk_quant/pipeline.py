@@ -7,15 +7,17 @@ from pathlib import Path
 
 from . import engine
 from .activity import ACTIVITY_METHODOLOGY, build_unexplained_activity
+from .wizard import WIZARD_METHODOLOGY, build_wizard_candidates
 
 
 def build_quant_payload(max_symbols: int = 0) -> tuple[dict, list[dict]]:
-    """Build the production Quant payload with Step 14 activity monitoring.
+    """Build the production Quant payload with activity and Wizard layers.
 
     Core ranking, regime, portfolio and walk-forward calculations remain in
-    ``engine``. Step 14 is deliberately layered around those validated
-    functions so the anomaly monitor cannot alter Quant Score or backtest
-    behavior.
+    ``engine``. The activity monitor and Wizard shortlist are deliberately
+    layered around those validated functions so neither can alter Quant Score
+    or backtest behavior. The Wizard layer reuses the same in-memory daily
+    TradingView snapshot and performs no additional market-data scan.
     """
     universe = engine.get_universe()
     if len(universe) < engine.MIN_UNIVERSE:
@@ -40,6 +42,14 @@ def build_quant_payload(max_symbols: int = 0) -> tuple[dict, list[dict]]:
     breadth, regime = engine._breadth(scored, benchmark)
     portfolio, portfolio_summary = engine._portfolio(scored, regime["state"])
     unexplained_activity = build_unexplained_activity(scored, prices, benchmark)
+    held_symbols = {str(row.get("symbol")) for row in portfolio if row.get("symbol")}
+    wizard_candidates, wizard_summary = build_wizard_candidates(
+        scored,
+        unexplained_activity,
+        regime,
+        held_symbols=held_symbols,
+        limit=20,
+    )
 
     generated = datetime.now(timezone.utc).isoformat()
     seed = f"{completed_session.date().isoformat()}|{len(scored)}|{regime['state']}"
@@ -74,6 +84,7 @@ def build_quant_payload(max_symbols: int = 0) -> tuple[dict, list[dict]]:
         "session_gate": completed_session.date().isoformat(),
         "stale_symbols_excluded": len(prices) - len(rows),
         "unexplained_activity": ACTIVITY_METHODOLOGY,
+        "wizard": WIZARD_METHODOLOGY,
     }
     payload = {
         "version": "5.0.0",
@@ -90,6 +101,8 @@ def build_quant_payload(max_symbols: int = 0) -> tuple[dict, list[dict]]:
         "stocks": scored,
         "portfolio": portfolio,
         "portfolio_summary": portfolio_summary,
+        "wizard_candidates": wizard_candidates,
+        "wizard_summary": wizard_summary,
         "research": research[:120],
         # ``unexplained_activity`` is the canonical Step 14 name. Keep the old
         # key as a read-only compatibility alias for existing dashboard builds.

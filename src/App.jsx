@@ -1,11 +1,12 @@
 import React, { useEffect, useMemo, useState } from "react";
+import Wizard from "./Wizard.jsx";
 
-const TABS = ["Overview", "Rankings", "Portfolio", "Regime", "Backtest", "Performance", "Research"];
+const TABS = ["Overview", "Rankings", "Wizard", "Portfolio", "Regime", "Backtest", "Performance", "Research"];
 const NAV_META = {
   Overview: { label: "Today", icon: "◫" }, Rankings: { label: "Ranking", icon: "≡" },
-  Portfolio: { label: "Portfolio", icon: "▦" }, Regime: { label: "Regime", icon: "◉" },
-  Backtest: { label: "Backtest", icon: "◇" }, Performance: { label: "Performance", icon: "∿" },
-  Research: { label: "Research", icon: "⌁" },
+  Wizard: { label: "Wizard", icon: "◆" }, Portfolio: { label: "Portfolio", icon: "▦" },
+  Regime: { label: "Regime", icon: "◉" }, Backtest: { label: "Backtest", icon: "◇" },
+  Performance: { label: "Performance", icon: "∿" }, Research: { label: "Research", icon: "⌁" },
 };
 const COLORS = { strong: "#4af6c3", positive: "#4af6c3", neutral: "#fb8b1e", negative: "#ff433d", muted: "#0068ff" };
 
@@ -18,7 +19,7 @@ const DEMO_DATA = {
   benchmark: "^KLSE",
   regime: { state: "AWAITING DATA", score: 0, confidence: 0, components: {} },
   breadth: { above_20dma: 0, above_50dma: 0, above_200dma: 0, advance_decline: 0, volume_breadth: 0, sector_breadth: 0, participation: 0, dispersion: 0 },
-  stocks: [], portfolio: [], research: [], abnormal_activity: [],
+  stocks: [], portfolio: [], research: [], abnormal_activity: [], wizard_candidates: [], wizard_summary: {},
   backtest: { total_trades: 0, win_rate: 0, expectancy: 0, max_drawdown: 0, groups: [] },
   performance: { live_trades: 0, open_trades: 0, closed_trades: 0, hit_rate: 0, realized_return: 0, equity_curve: [] },
 };
@@ -40,20 +41,6 @@ function Sparkline({ values = [], color = COLORS.strong }) {
   const min = Math.min(...points), max = Math.max(...points), span = max - min || 1;
   const d = points.map((value, index) => `${index ? "L" : "M"}${(index / (points.length - 1)) * 100},${36 - ((value - min) / span) * 32}`).join(" ");
   return <svg className="spark" viewBox="0 0 100 40" preserveAspectRatio="none" aria-label="performance history"><path d={d} fill="none" stroke={color} strokeWidth="2" vectorEffect="non-scaling-stroke" /></svg>;
-}
-
-function StockTable({ rows, compact = false }) {
-  const [sort, setSort] = useState("quant_score");
-  const [direction, setDirection] = useState("desc");
-  const sorted = useMemo(() => [...rows].sort((a, b) => {
-    const av = a[sort] ?? "", bv = b[sort] ?? "";
-    const result = typeof av === "number" && typeof bv === "number" ? av - bv : String(av).localeCompare(String(bv));
-    return direction === "asc" ? result : -result;
-  }), [rows, sort, direction]);
-  const choose = (key) => { if (sort === key) setDirection((current) => current === "asc" ? "desc" : "asc"); else { setSort(key); setDirection("desc"); } };
-  if (!rows.length) return <Empty title="No ranked stocks yet" text="The first successful daily quant publication will populate this table." />;
-  const head = (key, text) => <button onClick={() => choose(key)}>{text}{sort === key ? (direction === "desc" ? " ↓" : " ↑") : ""}</button>;
-  return <div className="table-wrap"><table className={compact ? "compact" : ""}><thead><tr><th>{head("symbol", "Stock")}</th><th>{head("quant_score", "Quant")}</th><th>{head("expected_edge", "Edge")}</th><th>{head("confidence", "Confidence")}</th><th>{head("close", "Close")}</th><th>{head("rs_20d", "RS 20D")}</th><th>Decision</th></tr></thead><tbody>{sorted.map((row, index) => <tr key={row.symbol}><td data-label="Stock"><div className="stock"><b>{row.symbol}</b><span>{row.name || row.sector || `Rank ${index + 1}`}</span></div></td><td data-label="Quant"><span className={`score ${Number(row.quant_score) >= 70 ? "elite" : ""}`}>{num(row.quant_score, 0)}</span></td><td data-label="Expected edge" className={tone(row.expected_edge)}>{pct(row.expected_edge, 2)}</td><td data-label="Confidence">{pct(row.confidence, 0)}</td><td data-label="Close">RM {num(row.close, Number(row.close) < 1 ? 3 : 2)}</td><td data-label="RS 20D" className={tone(row.rs_20d)}>{pct(row.rs_20d, 2)}</td><td data-label="Decision"><Badge kind={String(row.action || "WATCH").toLowerCase()}>{row.action || "WATCH"}</Badge></td></tr>)}</tbody></table></div>;
 }
 
 function RankingList({ rows }) {
@@ -156,7 +143,7 @@ export default function App() {
   const startRun = async () => {
     if (["authorizing", "queued", "scanning"].includes(runState)) return;
     setRunState("authorizing");
-    setRunMessage("Requesting full Bursa scan…");
+    setRunMessage("Checking today's Bursa snapshot…");
     const previousRunId = data.run_id;
     const previousGeneratedAt = data.generated_at;
     try {
@@ -167,13 +154,21 @@ export default function App() {
         if (body.error === "github_token_not_configured") throw new Error("Cloudflare is missing the GitHub trigger token.");
         throw new Error("The scan could not be queued.");
       }
+      if (body.state === "reused" && body.data) {
+        setData(body.data);
+        setStatus("live");
+        setRunState("published");
+        setRunMessage(`Today's ${body.scan_date || "Bursa"} snapshot already exists · reused without another full-market scan.`);
+        window.setTimeout(() => { setRunState("idle"); setRunMessage(""); }, 8000);
+        return;
+      }
 
       setRunState("queued");
       setRunMessage("Scan queued · waiting for publication…");
       for (let attempt = 0; attempt < 80; attempt += 1) {
         await new Promise((resolve) => setTimeout(resolve, 15000));
         setRunState("scanning");
-        setRunMessage("Scanning Bursa · this normally takes 6–10 minutes…");
+        setRunMessage("Scanning Bursa · waiting for the daily snapshot publication…");
         const latestResponse = await fetch(`/api/latest?poll=${Date.now()}`, { cache: "no-store" });
         if (!latestResponse.ok) continue;
         const latestBody = await latestResponse.json();
@@ -193,10 +188,10 @@ export default function App() {
       setRunMessage(error instanceof Error ? error.message : "The scan could not be started.");
     }
   };
-  const pages = { Overview, Rankings, Portfolio, Regime, Backtest, Performance, Research };
+  const pages = { Overview, Rankings, Wizard, Portfolio, Regime, Backtest, Performance, Research };
   const Page = pages[active];
   const solidOrange = { background: "#fb8b1e", backgroundImage: "none", border: 0, boxShadow: "none", outline: 0, color: "#000000", WebkitAppearance: "none", appearance: "none" };
   const runBusy = ["authorizing", "queued", "scanning"].includes(runState);
   const runLabel = runState === "authorizing" ? "CHECK" : runState === "queued" ? "QUEUED" : runState === "scanning" ? "RUNNING" : runState === "published" ? "DONE" : "RUN";
-  return <div className="app-shell"><header><div className="brand"><div className="brand-mark-orange" style={solidOrange}>BMK</div><div><span>BURSA MALAYSIA · QUANT</span><h1>MusangKing Terminal</h1></div></div><div className="header-meta"><button type="button" className={`run-button-orange ${runState}`} style={solidOrange} onClick={startRun} disabled={runBusy} aria-label="Run full Bursa quant scan"><span aria-hidden="true">▶</span>{runLabel}</button><div className={`date-pill ${status === "live" ? "live" : ""}`}><i />{data.scan_date || "—"}</div><button className="theme" onClick={() => setTheme(theme === "dark" ? "light" : "dark")} aria-label="Toggle theme">{theme === "dark" ? "☀" : "◐"}</button></div></header><div className={`public-notice ${runState}`}>{runMessage || "Public dashboard · data is read-only · RUN starts the full Bursa workflow directly"}</div><nav aria-label="Terminal sections">{TABS.map((tab) => <button key={tab} className={active === tab ? "active" : ""} onClick={() => setActive(tab)}><span aria-hidden="true">{NAV_META[tab].icon}</span><strong>{NAV_META[tab].label}</strong></button>)}</nav><main><div className={`page-title ${active === "Rankings" ? "ranking-title" : ""}`}><div><span className="eyebrow">{data.market || "MYX"} · {data.benchmark || "^KLSE"}</span><h2>{NAV_META[active].label}</h2></div><div className="updated"><span>LAST UPDATED</span><b>{dateTime(data.generated_at)}</b></div></div>{status !== "live" && <div className={`notice ${status}`}>{status === "loading" ? "Connecting to Quant API…" : status === "empty" ? "Deployment is ready. Waiting for the first daily quant publication." : "Quant API is unavailable. The interface remains ready and will reconnect on reload."}</div>}<Page data={data}/></main><footer><span>Bursa MusangKing Quant Terminal v5.0 · Phases 1–15</span><span>Research and ranking output only. No profitability is guaranteed.</span></footer></div>;
+  return <div className="app-shell"><header><div className="brand"><div className="brand-mark-orange" style={solidOrange}>BMK</div><div><span>BURSA MALAYSIA · QUANT</span><h1>MusangKing Terminal</h1></div></div><div className="header-meta"><button type="button" className={`run-button-orange ${runState}`} style={solidOrange} onClick={startRun} disabled={runBusy} aria-label="Run or reuse Bursa quant scan"><span aria-hidden="true">▶</span>{runLabel}</button><div className={`date-pill ${status === "live" ? "live" : ""}`}><i />{data.scan_date || "—"}</div><button className="theme" onClick={() => setTheme(theme === "dark" ? "light" : "dark")} aria-label="Toggle theme">{theme === "dark" ? "☀" : "◐"}</button></div></header><div className={`public-notice ${runState}`}>{runMessage || "Public dashboard · RUN reuses today's published snapshot when available and avoids a duplicate full-market scan"}</div><nav aria-label="Terminal sections">{TABS.map((tab) => <button key={tab} className={active === tab ? "active" : ""} onClick={() => setActive(tab)}><span aria-hidden="true">{NAV_META[tab].icon}</span><strong>{NAV_META[tab].label}</strong></button>)}</nav><main><div className={`page-title ${active === "Rankings" ? "ranking-title" : ""}`}><div><span className="eyebrow">{data.market || "MYX"} · {data.benchmark || "^KLSE"}</span><h2>{NAV_META[active].label}</h2></div><div className="updated"><span>LAST UPDATED</span><b>{dateTime(data.generated_at)}</b></div></div>{status !== "live" && <div className={`notice ${status}`}>{status === "loading" ? "Connecting to Quant API…" : status === "empty" ? "Deployment is ready. Waiting for the first daily quant publication." : "Quant API is unavailable. The interface remains ready and will reconnect on reload."}</div>}<Page data={data}/></main><footer><span>Bursa MusangKing Quant Terminal v5.0 · Wizard decision layer</span><span>Model decision support only. No profitability is guaranteed.</span></footer></div>;
 }
