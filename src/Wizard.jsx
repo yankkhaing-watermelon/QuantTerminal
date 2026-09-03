@@ -4,6 +4,8 @@ import "./wizard.css";
 const clamp = (value, low = 0, high = 100) => Math.max(low, Math.min(high, Number(value) || 0));
 const num = (value, digits = 1) => Number.isFinite(Number(value)) ? Number(value).toFixed(digits) : "—";
 const money = (value) => Number.isFinite(Number(value)) ? `RM ${Number(value).toFixed(Number(value) < 1 ? 3 : 2)}` : "RM —";
+const BUY_ACTIONS = new Set(["BUY", "BUY CANDIDATE", "ADD"]);
+const DEFENSIVE_ACTIONS = new Set(["TRIM", "SELL", "AVOID"]);
 
 const regimeFit = {
   "STRONG RISK-ON": 100,
@@ -74,7 +76,16 @@ function previewCandidates(data) {
       ],
       _preview: true,
     };
-  }).sort((a, b) => Number(b.wizard_score) - Number(a.wizard_score)).slice(0, 20);
+  }).sort((a, b) => Number(b.wizard_score) - Number(a.wizard_score));
+}
+
+function mergeCandidateSources(data) {
+  const published = Array.isArray(data.wizard_candidates) ? data.wizard_candidates : [];
+  const preview = previewCandidates(data);
+  const bySymbol = new Map();
+  for (const row of published) bySymbol.set(String(row.symbol), row);
+  for (const row of preview) if (!bySymbol.has(String(row.symbol))) bySymbol.set(String(row.symbol), row);
+  return [...bySymbol.values()].sort((a, b) => Number(b.wizard_score) - Number(a.wizard_score));
 }
 
 function ActionBadge({ action }) {
@@ -84,38 +95,38 @@ function ActionBadge({ action }) {
 
 export default function Wizard({ data }) {
   const [limit, setLimit] = useState(15);
-  const [filter, setFilter] = useState("ALL");
-  const published = Array.isArray(data.wizard_candidates) && data.wizard_candidates.length > 0;
-  const source = useMemo(() => published ? data.wizard_candidates : previewCandidates(data), [data, published]);
-  const rows = source.filter((row) => filter === "ALL" || (filter === "ACTION" && ["BUY", "BUY CANDIDATE", "ADD"].includes(row.action)) || (filter === "WATCH" && row.action === "WATCH") || (filter === "DEFENSIVE" && ["TRIM", "SELL", "AVOID"].includes(row.action))).slice(0, limit);
-  const buys = source.filter((row) => ["BUY", "BUY CANDIDATE", "ADD"].includes(row.action)).length;
-  const watches = source.filter((row) => row.action === "WATCH").length;
-  const defensive = source.filter((row) => ["TRIM", "SELL", "AVOID"].includes(row.action)).length;
+  const [filter, setFilter] = useState("BUY");
+  const source = useMemo(() => mergeCandidateSources(data), [data]);
+  const buyRows = source.filter((row) => BUY_ACTIONS.has(row.action));
+  const watchRows = source.filter((row) => row.action === "WATCH");
+  const defensiveRows = source.filter((row) => DEFENSIVE_ACTIONS.has(row.action));
+  const filtered = filter === "BUY" ? buyRows : filter === "WATCH" ? watchRows : filter === "DEFENSIVE" ? defensiveRows : source;
+  const rows = filtered.slice(0, limit);
 
   return <>
     <section className="wizard-hero">
       <div>
         <span className="eyebrow">MW-INSPIRED DECISION LAYER</span>
-        <h3>Top Bursa opportunities</h3>
-        <p>Ranks the existing daily Quant snapshot into a small actionable shortlist. No second full-market scan is performed.</p>
+        <h3>Top Bursa buy recommendations</h3>
+        <p>Default view only shows BUY, BUY CANDIDATE and ADD names that pass the decision gates. AVOID stocks never fill the Top 15.</p>
       </div>
-      <div className="wizard-hero-score"><strong>{rows.length}</strong><span>shown</span><small>{published ? "Published Wizard" : "Snapshot preview"}</small></div>
+      <div className="wizard-hero-score"><strong>{rows.length}</strong><span>shown</span><small>{filter === "BUY" ? "BUY FOCUS" : "REVIEW MODE"}</small></div>
     </section>
 
     <section className="wizard-stats">
-      <div><span>Actionable</span><strong>{buys}</strong></div>
-      <div><span>Watch</span><strong>{watches}</strong></div>
-      <div><span>Defensive / Avoid</span><strong>{defensive}</strong></div>
+      <div><span>Buy recommendations</span><strong>{buyRows.length}</strong></div>
+      <div><span>Watch</span><strong>{watchRows.length}</strong></div>
+      <div><span>Defensive / Avoid</span><strong>{defensiveRows.length}</strong></div>
       <div><span>Regime</span><strong className="wizard-regime">{data.regime?.state || "—"}</strong></div>
     </section>
 
     <section className="wizard-controls" aria-label="Wizard shortlist controls">
       <div className="wizard-limits" role="group" aria-label="Candidate limit">{[10, 15, 20].map((value) => <button type="button" key={value} className={limit === value ? "active" : ""} onClick={() => setLimit(value)}>TOP {value}</button>)}</div>
       <select value={filter} onChange={(event) => setFilter(event.target.value)} aria-label="Filter Wizard action">
-        <option value="ALL">ALL ACTIONS</option>
-        <option value="ACTION">BUY / ADD</option>
-        <option value="WATCH">WATCH</option>
+        <option value="BUY">BUY RECOMMENDATIONS</option>
+        <option value="WATCH">WATCH ONLY</option>
         <option value="DEFENSIVE">TRIM / SELL / AVOID</option>
+        <option value="ALL">ALL MODEL OUTPUTS</option>
       </select>
     </section>
 
@@ -143,9 +154,9 @@ export default function Wizard({ data }) {
           <div className="wizard-gates"><span className={row.liquidity_gate === "PASS" ? "pass" : "fail"}>LIQ {row.liquidity_gate || "—"}</span><span className={row.risk_gate === "PASS" ? "pass" : "fail"}>RISK {row.risk_gate || "—"}</span><span>{row.regime || data.regime?.state || "—"}</span></div>
           <div className="wizard-reasons">{(row.reasons || []).map((reason) => <span key={reason}>{reason}</span>)}</div>
         </div>
-      </article>) : <div className="wizard-empty">No candidates match this action filter.</div>}
+      </article>) : <div className="wizard-empty">No stocks currently meet the buy recommendation gates. The list is intentionally left short rather than padded with AVOID names.</div>}
     </section>
 
-    <p className="wizard-disclaimer">MW-inspired implementation rules derived from the same published TradingView daily-bar snapshot used by Quant Terminal. BUY / SELL labels are model decision-support outputs, not guaranteed outcomes or personal investment advice. Current quote shown here is the latest published daily snapshot, not an intraday tick feed.</p>
+    <p className="wizard-disclaimer">MW-inspired decision-support output using the latest published daily Quant snapshot. The default Top 10/15/20 view is buy-focused and excludes AVOID / SELL / TRIM names. Prices are latest published daily snapshots, not intraday ticks.</p>
   </>;
 }
