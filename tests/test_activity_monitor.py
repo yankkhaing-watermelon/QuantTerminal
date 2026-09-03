@@ -70,6 +70,7 @@ class ActivityMonitorTests(unittest.TestCase):
         self.assertNotIn("leak", row["reason"].lower())
         self.assertNotIn("announcement", row["reason"].lower())
         self.assertEqual(row["baseline_sessions"], 20)
+        self.assertAlmostEqual(row["close"], float(spike_close.iloc[-1]), places=4)
 
     def test_methodology_keeps_explicit_step14_exclusions(self):
         exclusions = " ".join(ACTIVITY_METHODOLOGY["exclusions"]).lower()
