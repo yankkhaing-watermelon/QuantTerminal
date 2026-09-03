@@ -174,6 +174,7 @@ def build_unexplained_activity(
             "symbol": symbol,
             "name": stock.get("name"),
             "sector": stock.get("sector"),
+            "close": _finite(pd.to_numeric(frame["Close"], errors="coerce").iloc[-1], 4),
             "activity_score": score,
             "activity_level": _activity_level(score),
             "direction": activity_direction(factors),
