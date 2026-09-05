@@ -1,12 +1,28 @@
-name: Daily Quant Publication
+name: Daily Quant and Astra Publication
 
 on:
   workflow_dispatch:
     inputs:
       max_symbols:
-        description: "Development limit; 0 publishes the full Bursa universe"
+        description: "Legacy input; production always collects the complete Bursa universe"
         required: false
         default: "0"
+      request_id:
+        description: "Shared RUN identifier"
+        required: false
+        default: ""
+      config:
+        description: "Astra portfolio assumptions JSON"
+        required: false
+        default: "{}"
+  workflow_call:
+    inputs:
+      request_id:
+        type: string
+        default: ""
+      config:
+        type: string
+        default: "{}"
   schedule:
     - cron: "45 11 * * 1-5"
 
@@ -28,38 +44,18 @@ jobs:
           python-version: "3.11"
           cache: pip
       - run: pip install -r requirements.txt
-      - name: Run quant engine
+      - name: One 300-bar scan for Quant, Wizard and Astra
         env:
           MAX_SYMBOLS: ${{ inputs.max_symbols || '0' }}
+          ASTRA_REQUEST_ID: ${{ inputs.request_id }}
+          ASTRA_CONFIG: ${{ inputs.config || '{}' }}
           PORTFOLIO_SYMBOLS: ${{ vars.PORTFOLIO_SYMBOLS }}
-        run: python scripts/run_quant.py --output artifacts/latest --max-symbols "$MAX_SYMBOLS"
-      - name: Validate rankings and portfolio payload
-        run: python scripts/validate_rankings.py --artifacts artifacts/latest
-      - name: Validate portfolio risk and position sizing
-        run: python scripts/validate_portfolio_risk.py --artifacts artifacts/latest
-      - name: Validate walk-forward backtest
-        run: python scripts/validate_backtest.py --artifacts artifacts/latest
-      - name: Publish research archive and terminal payload
-        if: ${{ github.event_name == 'schedule' || inputs.max_symbols == '0' || inputs.max_symbols == '' }}
-        env:
           QUANT_API_BASE: ${{ secrets.QUANT_API_BASE }}
           PUBLISH_TOKEN: ${{ secrets.PUBLISH_TOKEN }}
-        run: python scripts/publish.py --artifacts artifacts/latest
-      - name: Verify live published payload
-        if: ${{ github.event_name == 'schedule' || inputs.max_symbols == '0' || inputs.max_symbols == '' }}
-        env:
-          QUANT_API_BASE: ${{ secrets.QUANT_API_BASE }}
-        run: |
-          python scripts/validate_published.py --api-base "$QUANT_API_BASE" --output artifacts/published
-          python scripts/validate_rankings.py --artifacts artifacts/published
-          python scripts/validate_portfolio_risk.py --artifacts artifacts/published
-          python scripts/validate_backtest.py --artifacts artifacts/published
-      - name: Development scan notice
-        if: ${{ github.event_name == 'workflow_dispatch' && inputs.max_symbols != '0' && inputs.max_symbols != '' }}
-        run: echo "Development-limited scan completed; Step 15 intentionally skipped production publication."
+        run: python scripts/run_shared.py --publish
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: quant-artifacts-${{ github.run_id }}
+          name: shared-quant-astra-${{ github.run_id }}
           path: artifacts
-          retention-days: 14
+          retention-days: 7

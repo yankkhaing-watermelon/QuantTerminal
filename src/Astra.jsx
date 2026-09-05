@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from "react";
 import "./astra.css";
 
-const INITIAL = { capital: 100000, risk_pct: .5, max_positions: 8, fee_bps: 20, minimum_fee: 8, slippage_bps: 10, breadth_filter: false };
+export const INITIAL = { capital: 100000, risk_pct: .5, max_positions: 8, fee_bps: 20, minimum_fee: 8, slippage_bps: 10, breadth_filter: false };
 const n = (value, digits = 1) => value == null || !Number.isFinite(Number(value)) ? "—" : Number(value).toLocaleString("en-MY", { minimumFractionDigits: digits, maximumFractionDigits: digits });
 const money = (value) => value == null ? "—" : `RM ${n(value, value < 1 ? 3 : 2)}`;
 const pct = (value) => value == null ? "—" : `${n(value)}%`;
@@ -30,11 +30,11 @@ function download(result, key, runId) {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
-export default function Astra() {
+export default function Astra({ settings = INITIAL, setSettings, sharedJob }) {
   const [payload, setPayload] = useState(null), [job, setJob] = useState(null);
-  const [error, setError] = useState(""), [loading, setLoading] = useState(true), [sending, setSending] = useState(false);
+  const [error, setError] = useState(""), [loading, setLoading] = useState(true);
   const [strategy, setStrategy] = useState("breakout"), [view, setView] = useState("signals"), [search, setSearch] = useState("");
-  const [settings, setSettings] = useState(INITIAL), [notice, setNotice] = useState("");
+  const notice = "Use RUN at the top to update Quant and Astra together with these settings.";
   useEffect(() => {
     let live = true;
     const refresh = async () => {
@@ -50,29 +50,18 @@ export default function Astra() {
     const timer = setInterval(refresh, 15000);
     return () => { live = false; clearInterval(timer); };
   }, []);
-  const busy = sending || ["queued", "running"].includes(job?.state);
-  async function run(event) {
-    event.preventDefault(); setSending(true); setNotice("");
-    try {
-      const response = await fetch("/api/astra-run", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ config: settings }) });
-      const body = await response.json();
-      if (!response.ok) throw new Error(body.error || "Astra could not be queued.");
-      setJob({ state: "queued", processed: 0, total: 0, request_id: body.request_id });
-      setNotice("Astra is queued. You can close the app; the scan continues on the server.");
-    } catch (err) { setNotice(err.message); }
-    finally { setSending(false); }
-  }
+  const busy = ["queued", "running"].includes((sharedJob || job)?.state);
   const result = payload?.strategies?.[strategy], coverage = payload?.coverage, history = payload?.history;
   const metrics = result?.metrics;
   const candidates = (result?.candidates || []).filter((r) => `${r.symbol} ${r.name} ${r.tv_symbol}`.toLowerCase().includes(search.toLowerCase()));
   return <div className="astra">
     <div className="astra-heading"><div><span className="eyebrow">FULL BURSA UNIVERSE · TRADINGVIEW</span><h3>Trend research & portfolio backtest</h3><p>Find strong trends. Size the risk. Let the exits decide.</p></div><span className="astra-label">RESEARCH v1</span></div>
-    <form onSubmit={run} className="astra-settings">
+    <section className="astra-settings">
       <div className="astra-fields">
         <label>Starting capital (RM)<input type="number" min="1000" max="100000000" step="1000" required value={settings.capital} onChange={(e) => setSettings({ ...settings, capital: Number(e.target.value) })}/></label>
         <label>Risk per trade (%)<input type="number" min="0.1" max="5" step="0.1" required value={settings.risk_pct} onChange={(e) => setSettings({ ...settings, risk_pct: Number(e.target.value) })}/></label>
         <label>Maximum holdings<input type="number" min="1" max="50" step="1" required value={settings.max_positions} onChange={(e) => setSettings({ ...settings, max_positions: Number(e.target.value) })}/></label>
-        <button className="astra-primary" disabled={busy}>{busy ? "Astra running…" : "Run Astra scan & backtest"}</button>
+        <p className="astra-shared-hint">{busy ? "Shared scan running…" : "Use the top RUN button. One download updates all strategies."}</p>
       </div>
       <details><summary>Execution assumptions</summary><div className="astra-fields">
         <label>Combined fees per side (bps)<input type="number" min="0" max="250" value={settings.fee_bps} onChange={(e) => setSettings({ ...settings, fee_bps: Number(e.target.value) })}/></label>
@@ -80,17 +69,18 @@ export default function Astra() {
         <label>Slippage per side (bps)<input type="number" min="0" max="250" value={settings.slippage_bps} onChange={(e) => setSettings({ ...settings, slippage_bps: Number(e.target.value) })}/></label>
         <label className="astra-check"><input type="checkbox" checked={settings.breadth_filter} onChange={(e) => setSettings({ ...settings, breadth_filter: e.target.checked })}/> Require breadth above 50%</label>
       </div><p>100 bps = 1%. Costs are estimates; replace them with assumptions suitable for your broker. The scheduled daily run uses the documented defaults.</p></details>
-    </form>
+    </section>
     {(notice || job) && <div className="astra-status" role="status"><strong>{job?.state?.replaceAll("_", " ") || "Request"}</strong><span>{["running", "queued"].includes(job?.state) ? `${job.processed || 0} / ${job.total || "—"} stocks processed. ${job.message || "Waiting for the runner."}` : job?.message || notice}</span>{notice && <small>{notice}</small>}{job?.total > 0 && busy && <progress value={job.processed} max={job.total}/>}</div>}
     {error && <p className="astra-error" role="alert">{error}{payload && " Displaying the last successfully loaded publication."}</p>}
     {loading && <p role="status">Loading Astra publication…</p>}
-    {!loading && !payload && <section className="astra-empty"><h4>Ready for the first Astra run</h4><p>Run Astra to discover every Bursa stock and request up to 1,500 daily bars per stock. Results will report actual coverage and available history. No backtest returns are assumed.</p></section>}
+    {!loading && !payload && <section className="astra-empty"><h4>Ready for the first Astra run</h4><p>Use RUN at the top to discover every Bursa stock and request 300 daily bars per stock once for all strategies. Results will report actual coverage and available history. No backtest returns are assumed.</p></section>}
     {payload && <>
       <p className="astra-publication">Astra market date <b>{payload.scan_date}</b> · Published {timestamp(payload.generated_at)} MYT · {coverage.partial ? "Partial data coverage" : "Full data coverage"}</p>
       <div className="astra-metrics"><Metric label="Universe discovered" value={n(coverage.discovered, 0)} detail={`${n(coverage.attempted, 0)} attempted · ${coverage.excluded || 0} excluded`}/><Metric label="Fresh with history" value={n(coverage.fresh_with_history, 0)} detail={`${n(coverage.failed, 0)} unavailable · ${n(coverage.stale, 0)} stale`}/><Metric label="Liquidity eligible" value={n(payload.eligible_today, 0)} detail="Before trend and entry rules"/><Metric label="Backtest sessions" value={n(history.test_sessions, 0)} detail={`${history.start || "—"} → ${history.end}`}/></div>
-      {(history.test_sessions < 756 || coverage.partial) && <p className="astra-caution">{history.test_sessions < 756 ? "Fewer than three years of test sessions are available. " : ""}{coverage.partial ? "Some stocks could not be fully analysed. " : ""}These results are provisional and include current-universe survivorship bias.</p>}
+      {(history.test_sessions < 756 || coverage.partial) && <p className="astra-caution">{history.test_sessions < 756 ? "The available test period is short; the strategy is not validated. " : ""}{coverage.partial ? "Some stocks could not be fully analysed. " : ""}These results are provisional and include current-universe survivorship bias.</p>}
       <div className="astra-switch" role="group" aria-label="Astra strategies">{Object.entries(payload.strategies).map(([key, value]) => <button key={key} aria-pressed={strategy === key} className={strategy === key ? "active" : ""} onClick={() => setStrategy(key)}>{value.name}<small>{value.candidates.length} signals</small></button>)}</div>
       <div className="astra-subnav" role="group" aria-label="Astra views">{["signals", "backtest", "trades", "method"].map((tab) => <button key={tab} aria-pressed={view === tab} className={view === tab ? "active" : ""} onClick={() => setView(tab)}>{tab === "method" ? "Rules & coverage" : tab}</button>)}</div>
+      {result?.evidence && <section className="astra-caution" aria-label="Strategy evidence"><strong>{result.evidence.status} · {result.evidence.readiness}</strong><ul>{[...result.evidence.weaknesses, ...result.evidence.reasons].map((reason) => <li key={reason}>{reason}</li>)}</ul><p>300 stored bars leave at most 80 test sessions after warm-up. These candidates are research signals, not validated trading recommendations.</p></section>}
       {view === "signals" && <section className="astra-panel"><div className="astra-panel-head"><h4>{candidates.length} qualifying signals</h4><input aria-label="Search Astra stocks" placeholder="Code or company" value={search} onChange={(e) => setSearch(e.target.value)}/></div><p>Signals use the completed close. Entry is evaluated next session, subject to available cash and risk limits. Reference stops are recalculated from the actual entry.</p>
         {!candidates.length ? <p className="astra-empty">No stocks match this strategy and search for the published session. Cash is a valid outcome.</p> : <div className="astra-candidates">{candidates.map((r) => <article key={r.symbol}><div><small>#{r.rank} · {r.symbol} · {r.tv_symbol}</small><h4>{r.name}</h4><span>{r.sector}</span></div><dl><dt>Close</dt><dd>{money(r.close)}</dd><dt>Reference stop</dt><dd>{money(r.reference_stop)}</dd><dt>126D momentum</dt><dd>{pct(r.momentum_pct)}</dd><dt>RS percentile</dt><dd>{n(r.rs_percentile)}</dd><dt>Median turnover</dt><dd>{money(r.median_turnover)}</dd></dl></article>)}</div>}
       </section>}

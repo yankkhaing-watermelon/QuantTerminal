@@ -31,16 +31,19 @@ export async function onRequestPost({ request, env }) {
       await env.DB.batch([
         env.DB.prepare("INSERT OR IGNORE INTO astra_reports(run_id,scan_date,generated_at,payload_hash,payload_json) VALUES(?,?,?,?,?)")
           .bind(data.run_id, data.scan_date, data.generated_at, hash, serialized),
-        env.DB.prepare("UPDATE astra_job SET state='completed',updated_at=?,lock_until=0,message='Scan and backtests published' WHERE request_id=?").bind(now, id),
+        env.DB.prepare("UPDATE astra_job SET state=?,updated_at=?,lock_until=?,message='Astra published; finalizing shared run' WHERE request_id=?")
+          .bind(body.defer_completion ? "running" : "completed", now, body.defer_completion ? now + 15000 : 0, id),
+        env.DB.prepare("DELETE FROM astra_reports WHERE run_id NOT IN (SELECT run_id FROM astra_reports ORDER BY scan_date DESC,generated_at DESC LIMIT 3)"),
       ]);
       return json({ ok: true, run_id: data.run_id, payload_hash: hash });
     }
-    if (!["start", "progress", "failed"].includes(body.action)) return json({ ok: false, error: "invalid_action" }, 422);
+    if (!["start", "progress", "failed", "complete"].includes(body.action)) return json({ ok: false, error: "invalid_action" }, 422);
     const processed = Number(body.processed ?? job.processed ?? 0), total = Number(body.total ?? job.total ?? 0);
     if (!Number.isInteger(processed) || !Number.isInteger(total) || processed < 0 || total < processed) return json({ ok: false, error: "invalid_progress" }, 422);
     const failed = body.action === "failed";
+    const complete = body.action === "complete";
     await env.DB.prepare("UPDATE astra_job SET state=?,updated_at=?,lock_until=?,processed=?,total=?,message=? WHERE request_id=?")
-      .bind(failed ? "failed" : "running", now, failed ? 0 : now + 15000, processed, total,
+      .bind(failed ? "failed" : complete ? "completed" : "running", now, failed || complete ? 0 : now + 15000, processed, total,
         String(body.message || "Scanning TradingView Bursa stocks").slice(0, 300), id).run();
     return json({ ok: true });
   } catch { return json({ ok: false, error: "astra_write_failed" }, 500); }

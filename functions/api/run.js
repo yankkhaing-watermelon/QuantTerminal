@@ -1,7 +1,4 @@
-const json = (body, status = 200) => new Response(JSON.stringify(body), {
-  status,
-  headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" },
-});
+import { claim, config, schema, sha256, json } from "../../lib/astra.js";
 
 function getDb(env) {
   if (!env.DB) return null;
@@ -55,7 +52,7 @@ async function latestPayload(db) {
 function workflowDispatchUrl(env) {
   const owner = env.GITHUB_OWNER || "yankkhaing-watermelon";
   const repository = env.GITHUB_REPOSITORY || "QuantTerminal";
-  const workflow = env.GITHUB_WORKFLOW || "daily-quant.yml";
+  const workflow = "daily-quant.yml";
   return `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repository)}/actions/workflows/${encodeURIComponent(workflow)}/dispatches`;
 }
 
@@ -69,11 +66,7 @@ function reuseReason(latest, now) {
   return null;
 }
 
-async function ensureRequestTable(db) {
-  await db.prepare("CREATE TABLE IF NOT EXISTS manual_run_requests (request_id TEXT PRIMARY KEY, requested_at_epoch INTEGER NOT NULL, status TEXT NOT NULL DEFAULT 'queued')").run();
-}
-
-async function dispatch(env) {
+async function dispatch(env, requestId, parameters) {
   if (!env.GITHUB_TOKEN) return { ok: false, error: "github_token_not_configured", status: 503 };
   const response = await fetch(workflowDispatchUrl(env), {
     method: "POST",
@@ -84,7 +77,7 @@ async function dispatch(env) {
       "user-agent": "bursa-musangking-quant-terminal",
       "x-github-api-version": "2022-11-28",
     },
-    body: JSON.stringify({ ref: env.GITHUB_REF || "main", inputs: { max_symbols: "0" } }),
+    body: JSON.stringify({ ref: env.GITHUB_REF || "main", inputs: { max_symbols: "0", request_id: requestId, config: JSON.stringify(parameters) } }),
   });
   if (!response.ok) return { ok: false, error: "github_dispatch_failed", github_status: response.status, status: 502 };
   return { ok: true };
@@ -96,11 +89,22 @@ export async function onRequestPost(context) {
   if (!db) return json({ ok: false, error: "database_not_configured" }, 503);
 
   try {
-    await ensureRequestTable(db);
+    const origin = context.request?.headers.get("origin");
+    if ((origin && origin !== new URL(context.request.url).origin) || context.request?.headers.get("sec-fetch-site") === "cross-site") return json({ ok: false, error: "cross_origin_request" }, 403);
+    let parameters;
+    try {
+      const body = context.request ? await context.request.text() : "";
+      parameters = config(body ? JSON.parse(body).config : {});
+    } catch (error) { return json({ ok: false, error: error.message }, 422); }
+    await schema(db);
     const now = malaysiaParts();
     const latest = await latestPayload(db);
     const reason = reuseReason(latest, now);
-    if (reason && latest) {
+    const row = await db.prepare("SELECT payload_json,payload_hash FROM astra_reports ORDER BY scan_date DESC,generated_at DESC LIMIT 1").first();
+    const astra = row && await sha256(row.payload_json) === row.payload_hash ? JSON.parse(row.payload_json) : null;
+    const matchingConfig = astra && Object.entries(parameters).every(([key, value]) => astra.config?.[key] === value);
+    const matchingSnapshot = astra?.shared_run_id && astra.shared_run_id === latest?.shared_run_id;
+    if (reason && latest && matchingConfig && matchingSnapshot) {
       return json({
         ok: true,
         state: "reused",
@@ -112,20 +116,13 @@ export async function onRequestPost(context) {
       });
     }
 
-    const epoch = Math.floor(Date.now() / 1000);
-    const cooldown = Math.max(300, Number(env.RUN_COOLDOWN_SECONDS || 900));
-    const last = await db.prepare("SELECT requested_at_epoch FROM manual_run_requests ORDER BY requested_at_epoch DESC LIMIT 1").first();
-    const elapsed = epoch - Number(last?.requested_at_epoch || 0);
-    if (last && elapsed < cooldown) {
-      return json({ ok: false, error: "run_cooldown", retry_after: cooldown - elapsed }, 409);
-    }
-
-    const queued = await dispatch(env);
-    if (!queued.ok) return json(queued, queued.status);
-
     const requestId = crypto.randomUUID();
-    await db.prepare("INSERT INTO manual_run_requests(request_id, requested_at_epoch, status) VALUES(?, ?, 'queued')")
-      .bind(requestId, epoch).run();
+    if (!(await claim(db, requestId))) return json({ ok: false, error: "run_cooldown", retry_after: 900 }, 409);
+    const queued = await dispatch(env, requestId, parameters);
+    if (!queued.ok) {
+      await db.prepare("UPDATE astra_job SET state='failed',lock_until=0,message=? WHERE request_id=?").bind(queued.error, requestId).run();
+      return json(queued, queued.status);
+    }
     return json({ ok: true, state: "queued", request_id: requestId, poll_seconds: 15, additional_market_scan: true }, 202);
   } catch (error) {
     return json({ ok: false, error: error instanceof Error ? error.message : String(error) }, 500);

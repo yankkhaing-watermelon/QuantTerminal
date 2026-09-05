@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import Wizard from "./Wizard.jsx";
-import Astra from "./Astra.jsx";
+import Astra, { INITIAL as ASTRA_INITIAL } from "./Astra.jsx";
+import TerminalNavigation from "./TerminalNavigation.jsx";
 
 const TABS = ["Overview", "Rankings", "Wizard", "Astra", "Portfolio", "Regime", "Backtest", "Performance", "Research"];
 const NAV_META = {
@@ -127,6 +128,12 @@ function Activity({ data }) {
 }
 
 export default function App() {
+  const [astraSettings, setAstraSettings] = useState(() => {
+    try { return { ...ASTRA_INITIAL, ...JSON.parse(localStorage.getItem("astra-settings") || "{}") }; }
+    catch { return ASTRA_INITIAL; }
+  });
+  const [sharedJob, setSharedJob] = useState(null);
+  useEffect(() => { localStorage.setItem("astra-settings", JSON.stringify(astraSettings)); }, [astraSettings]);
   const [active, setActive] = useState("Overview");
   const [data, setData] = useState(DEMO_DATA);
   const [status, setStatus] = useState("loading");
@@ -142,58 +149,50 @@ export default function App() {
     }).catch(() => live && setStatus("offline"));
     return () => { live = false; };
   }, []);
+  useEffect(() => {
+    let live = true;
+    async function refresh() {
+      try {
+        const response = await fetch(`/api/astra?status=${Date.now()}`, { cache: "no-store" });
+        if (!response.ok) return;
+        const body = await response.json();
+        if (!live || !body.ok) return;
+        setSharedJob(body.job);
+        if (["queued", "running"].includes(body.job?.state)) {
+          setRunState(body.job.state === "queued" ? "queued" : "scanning");
+          setRunMessage(`${body.job.message || "Shared scan running"} · ${body.job.processed || 0}/${body.job.total || "—"}`);
+        } else if (["failed", "timed_out"].includes(body.job?.state)) {
+          setRunState("error"); setRunMessage(body.job.message || "Shared run stopped. Check workflow logs.");
+        } else if (body.job?.state === "completed" && body.data?.shared_run_id) {
+          setRunState("idle"); setRunMessage("Quant, Wizard and Astra · shared run complete");
+          const latest = await fetch("/api/latest", { cache: "no-store" });
+          const published = latest.ok ? await latest.json() : null;
+          if (live && published?.data) { setData(published.data); setStatus("live"); }
+        }
+      } catch { /* Keep last verified result; the next poll can reconnect. */ }
+    }
+    refresh(); const timer = setInterval(refresh, 15000);
+    return () => { live = false; clearInterval(timer); };
+  }, []);
   const startRun = async () => {
     if (["authorizing", "queued", "scanning"].includes(runState)) return;
-    setRunState("authorizing");
-    setRunMessage("Checking today's Bursa snapshot…");
-    const previousRunId = data.run_id;
-    const previousGeneratedAt = data.generated_at;
+    setRunState("authorizing"); setRunMessage("Checking the shared Quant and Astra snapshot…");
     try {
-      const response = await fetch("/api/run", { method: "POST" });
-      const body = await response.json().catch(() => ({}));
-      if (!response.ok) {
-        if (body.error === "run_cooldown") throw new Error(`A scan was already requested. Try again in ${body.retry_after || 300} seconds.`);
-        if (body.error === "github_token_not_configured") throw new Error("Cloudflare is missing the GitHub trigger token.");
-        throw new Error("The scan could not be queued.");
+      const response = await fetch("/api/run", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ config: astraSettings }) });
+      const body = await response.json();
+      if (!response.ok) throw new Error(body.error === "run_cooldown" ? "A shared run is active or was requested recently. Progress will reconnect automatically." : body.error || "The shared scan could not start.");
+      if (body.state === "reused") {
+        setData(body.data); setStatus("live"); setRunState("idle");
+        setRunMessage("Quant and Astra already share this snapshot and these settings. No new TradingView scan.");
+      } else {
+        setRunState("queued"); setRunMessage("One shared 300-bar scan queued for Quant, Wizard and Astra. You can close the app.");
       }
-      if (body.state === "reused" && body.data) {
-        setData(body.data);
-        setStatus("live");
-        setRunState("published");
-        setRunMessage(`Today's ${body.scan_date || "Bursa"} snapshot already exists · reused without another full-market scan.`);
-        window.setTimeout(() => { setRunState("idle"); setRunMessage(""); }, 8000);
-        return;
-      }
-
-      setRunState("queued");
-      setRunMessage("Scan queued · waiting for publication…");
-      for (let attempt = 0; attempt < 80; attempt += 1) {
-        await new Promise((resolve) => setTimeout(resolve, 15000));
-        setRunState("scanning");
-        setRunMessage("Scanning Bursa · waiting for the daily snapshot publication…");
-        const latestResponse = await fetch(`/api/latest?poll=${Date.now()}`, { cache: "no-store" });
-        if (!latestResponse.ok) continue;
-        const latestBody = await latestResponse.json();
-        const latest = latestBody.data;
-        if (latest && (latest.run_id !== previousRunId || latest.generated_at !== previousGeneratedAt)) {
-          setData(latest);
-          setStatus("live");
-          setRunState("published");
-          setRunMessage("New scan published successfully.");
-          window.setTimeout(() => { setRunState("idle"); setRunMessage(""); }, 8000);
-          return;
-        }
-      }
-      throw new Error("The scan is still running. Reload later to check the publication.");
-    } catch (error) {
-      setRunState("error");
-      setRunMessage(error instanceof Error ? error.message : "The scan could not be started.");
-    }
+    } catch (error) { setRunState("error"); setRunMessage(error.message); }
   };
   const pages = { Overview, Rankings, Wizard, Astra, Portfolio, Regime, Backtest, Performance, Research };
   const Page = pages[active];
   const solidOrange = { background: "#fb8b1e", backgroundImage: "none", border: 0, boxShadow: "none", outline: 0, color: "#000000", WebkitAppearance: "none", appearance: "none" };
   const runBusy = ["authorizing", "queued", "scanning"].includes(runState);
   const runLabel = runState === "authorizing" ? "CHECK" : runState === "queued" ? "QUEUED" : runState === "scanning" ? "RUNNING" : runState === "published" ? "DONE" : "RUN";
-  return <div className="app-shell"><header><div className="brand"><div className="brand-mark-orange" style={solidOrange}>BMK</div><div><span>BURSA MALAYSIA · QUANT</span><h1>MusangKing Terminal</h1></div></div><div className="header-meta"><button type="button" className={`run-button-orange ${runState}`} style={solidOrange} onClick={startRun} disabled={runBusy} aria-label="Run or reuse Bursa quant scan"><span aria-hidden="true">▶</span>{runLabel}</button><div className={`date-pill ${status === "live" ? "live" : ""}`}><i />{data.scan_date || "—"}</div><button className="theme" onClick={() => setTheme(theme === "dark" ? "light" : "dark")} aria-label="Toggle theme">{theme === "dark" ? "☀" : "◐"}</button></div></header><div className={`public-notice ${runState}`}>{runMessage || "Public dashboard · RUN reuses today's published snapshot when available and avoids a duplicate full-market scan"}</div><nav aria-label="Terminal sections">{TABS.map((tab) => <button key={tab} className={active === tab ? "active" : ""} onClick={() => setActive(tab)}><span aria-hidden="true">{NAV_META[tab].icon}</span><strong>{NAV_META[tab].label}</strong></button>)}</nav><main><div className={`page-title ${active === "Rankings" ? "ranking-title" : ""}`}><div><span className="eyebrow">{data.market || "MYX"} · {data.benchmark || "^KLSE"}</span><h2>{NAV_META[active].label}</h2></div>{active !== "Astra" && <div className="updated"><span>LAST UPDATED</span><b>{dateTime(data.generated_at)}</b></div>}</div>{active !== "Astra" && status !== "live" && <div className={`notice ${status}`}>{status === "loading" ? "Connecting to Quant API…" : status === "empty" ? "Deployment is ready. Waiting for the first daily quant publication." : "Quant API is unavailable. The interface remains ready and will reconnect on reload."}</div>}<Page data={data}/></main><footer><span>Bursa MusangKing Quant Terminal v5.0 · Wizard decision layer</span><span>Model decision support only. No profitability is guaranteed.</span></footer></div>;
+  return <div className="app-shell"><header><div className="brand"><div className="brand-mark-orange" style={solidOrange}>BMK</div><div><span>BURSA MALAYSIA · QUANT</span><h1>MusangKing Terminal</h1></div></div><div className="header-meta"><button type="button" className={`run-button-orange ${runState}`} style={solidOrange} onClick={startRun} disabled={runBusy} aria-label="Run or reuse shared Quant and Astra scan"><span aria-hidden="true">▶</span>{runLabel}</button><div className={`date-pill ${status === "live" ? "live" : ""}`}><i />{data.scan_date || "—"}</div><button className="theme" onClick={() => setTheme(theme === "dark" ? "light" : "dark")} aria-label="Toggle theme">{theme === "dark" ? "☀" : "◐"}</button></div></header><div className={`public-notice ${runState}`}>{runMessage || "RUN updates Quant, Wizard and Astra · one TradingView scan · 300 daily bars per stock"}</div><TerminalNavigation tabs={TABS} metadata={NAV_META} active={active} onSelect={setActive}/><main><div className={`page-title ${active === "Rankings" ? "ranking-title" : ""}`}><div><span className="eyebrow">{data.market || "MYX"} · {data.benchmark || "^KLSE"}</span><h2>{NAV_META[active].label}</h2></div>{active !== "Astra" && <div className="updated"><span>LAST UPDATED</span><b>{dateTime(data.generated_at)}</b></div>}</div>{active !== "Astra" && status !== "live" && <div className={`notice ${status}`}>{status === "loading" ? "Connecting to Quant API…" : status === "empty" ? "Deployment is ready. Waiting for the first daily quant publication." : "Quant API is unavailable. The interface remains ready and will reconnect on reload."}</div>}<Page data={data} settings={astraSettings} setSettings={setAstraSettings} sharedJob={sharedJob}/></main><footer><span>Bursa MusangKing Quant Terminal v5.0 · Wizard decision layer</span><span>Model decision support only. No profitability is guaranteed.</span></footer></div>;
 }

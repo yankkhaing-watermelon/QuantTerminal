@@ -5,6 +5,7 @@ import { claim, config, schema } from "../lib/astra.js";
 import { onRequestPost as publish } from "../functions/api/admin/astra.js";
 import { onRequestGet as latest } from "../functions/api/astra.js";
 import { onRequestPost as run } from "../functions/api/astra-run.js";
+import { sha256 } from "../lib/astra.js";
 
 function database() {
   const sql = new DatabaseSync(":memory:");
@@ -71,5 +72,42 @@ test("superseded jobs cannot update newer job progress", async () => {
   await publish({ env, request: request({ action: "start", request_id: "new-job" }) });
   assert.equal((await publish({ env, request: request({ action: "progress", request_id: "old-job", processed: 5, total: 10 }) })).status, 409);
   assert.equal(sql.prepare("SELECT processed FROM astra_job").get().processed, 0);
+  sql.close();
+});
+
+test("top RUN reuses only a matching shared snapshot and configuration", async () => {
+  const { db, sql } = database(); await schema(db);
+  sql.exec("CREATE TABLE quant_runs(payload_json TEXT, scan_date TEXT, generated_at TEXT)");
+  const date = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kuala_Lumpur", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
+  const quant = { shared_run_id: "shared-one", scan_date: date, generated_at: new Date().toISOString() };
+  sql.prepare("INSERT INTO quant_runs VALUES(?,?,?)").run(JSON.stringify(quant), date, quant.generated_at);
+  const astra = { ...quant, config: config({}) }, text = JSON.stringify(astra);
+  sql.prepare("INSERT INTO astra_reports VALUES(?,?,?,?,?)").run("one", date, quant.generated_at, await sha256(text), text);
+  const originalFetch = globalThis.fetch; let dispatches = 0;
+  globalThis.fetch = async (url, options) => {
+    dispatches++;
+    assert.match(url, /workflows\/daily-quant.yml\/dispatches$/);
+    assert.equal(JSON.parse(JSON.parse(options.body).inputs.config).capital, 200000);
+    return new Response(null, { status: 204 });
+  };
+  try {
+    const env = { DB: db, GITHUB_TOKEN: "test-only" };
+    const reused = await (await run({ env, request: request({ config: {} }) })).json();
+    assert.equal(reused.state, "reused"); assert.equal(dispatches, 0);
+    const queued = await (await run({ env, request: request({ config: { capital: 200000 } }) })).json();
+    assert.equal(queued.state, "queued"); assert.equal(dispatches, 1);
+  } finally { globalThis.fetch = originalFetch; sql.close(); }
+});
+
+test("Astra publication can remain running until the shared job completes", async () => {
+  const { db, sql } = database(); const env = { DB: db, PUBLISH_TOKEN: "test-only" };
+  await publish({ env, request: request({ action: "start", request_id: "shared" }) });
+  const data = { version: "astra-1.0.0", run_id: `astra-${"b".repeat(24)}`, scan_date: "2026-09-04",
+    generated_at: "2026-09-05T10:00:00Z", strategies: { breakout: {}, pullback: {} }, config: config({}),
+    coverage: { discovered: 1129, processed: 1129, fresh_with_history: 1000 } };
+  await publish({ env, request: request({ action: "publish", request_id: "shared", data, defer_completion: true }) });
+  assert.equal(sql.prepare("SELECT state FROM astra_job").get().state, "running");
+  await publish({ env, request: request({ action: "complete", request_id: "shared" }) });
+  assert.equal(sql.prepare("SELECT state FROM astra_job").get().state, "completed");
   sql.close();
 });

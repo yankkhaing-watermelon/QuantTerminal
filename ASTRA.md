@@ -1,8 +1,8 @@
 # Astra research tab
 
-Astra adds an independent TradingView Bursa scan and two fixed-rule portfolio
-simulations. It does not change Quant Score, Wizard, portfolio allocations, the
-existing backtest, or the daily Quant workflow. No real orders are submitted.
+Astra adds two fixed-rule research simulations. The header RUN and daily workflow
+collect one TradingView Bursa snapshot shared by Quant, Wizard and Astra.
+Existing Quant scoring and portfolio rules are preserved. No real orders are submitted.
 
 ## Deployment
 
@@ -14,16 +14,18 @@ existing backtest, or the daily Quant workflow. No real orders are submitted.
 3. The first authenticated Astra run creates `astra_job` and `astra_reports`
    using additive `CREATE TABLE IF NOT EXISTS` statements. No existing table is
    altered. The manual trigger creates the same tables before claiming a job.
-4. Open **Astra**, set capital, risk and cost assumptions, then choose **Run Astra
-   scan & backtest**. The original header RUN button still controls Quant.
-5. Astra also runs at 20:30 Malaysia time on weekdays through `astra.yml`. Scheduled
-   runs use the documented defaults; custom PWA settings apply to that requested
-   run only. Both share a single server job lock and GitHub concurrency group.
+4. Open **Astra**, set capital, risk and cost assumptions, then choose the header **RUN**. It updates all models from the same snapshot.
+   On phones, Today, Rankings, Astra and Portfolio remain visible; More opens
+   the other five sections.
+5. One daily workflow runs at 19:45 Malaysia time on weekdays. Scheduled runs
+   use defaults; custom PWA settings apply to the requested run only. The legacy
+   Astra workflow delegates to the shared workflow and has no separate schedule.
+   A server job lock and GitHub concurrency group prevent overlapping scans.
 
 The workflow must exist on the repository's default branch before GitHub exposes
 its manual dispatch. New Cloudflare bindings or a separate hosting project are
 not required. Existing optional `GITHUB_OWNER`, `GITHUB_REPOSITORY`, and
-`GITHUB_REF` settings are respected; the Astra workflow filename is fixed.
+`GITHUB_REF` settings are respected; the shared workflow filename is fixed to `daily-quant.yml`.
 
 ## Data coverage
 
@@ -37,7 +39,8 @@ not required. Existing optional `GITHUB_OWNER`, `GITHUB_REPOSITORY`, and
   expected count.
 - Attempt all ordinary shares, with three concurrent workers and up to three
   attempts. No liquidity or market-cap shortlist limits history collection.
-- Request 1,500 bars per stock and benchmark; display actual returned history.
+- Request at most 300 daily bars per stock and benchmark; clamp imported and
+  returned histories to 300 as well. Display actual returned history.
   Convert tvdatafeed's host-local timestamps to MYT before extracting session
   dates; the same bar must retain the same market date on UTC and US hosts.
   Before 18:00 MYT, discard the current date. Use the benchmark's last available
@@ -100,6 +103,11 @@ Use 220 benchmark bars as indicator warm-up. Show the full available period,
 an independent fresh-cash simulation over its final 30%, and a full-period
 double-cost scenario. Rules are fixed, with no automated parameter search.
 The final-period result is not claimed to be untouched prospective validation.
+With 300 bars, warm-up leaves at most 80 backtest sessions. Evidence diagnostics
+flag short samples, fewer than 30 closed trades, non-positive expectancy, weak
+final-period or stressed returns and benchmark underperformance. These checks
+never promote a strategy to validated status. They diagnose weaknesses; they do
+not constitute a new or empirically improved trading strategy.
 
 Metrics include equity, price-return KLCI comparison, CAGR only for periods of at
 least one year, maximum drawdown, underwater duration, exposure, net expectancy
@@ -129,8 +137,10 @@ A displayed stop is not a broker order and cannot cap gap/suspension losses.
 
 Each workflow uploads `latest.json`, both trade CSVs and a `source/` directory
 containing the requested histories, benchmark, universe and coverage metadata.
-Artifacts are retained for 90 days; download them for longer retention. Reports
-are retained in D1. This version requests histories afresh; it does not claim a
+Artifacts are retained for seven days; download them for longer retention. D1
+keeps the latest three Astra reports on publication. Raw OHLCV is stored in
+workflow artifacts, not D1. Previously uploaded artifacts retain their original
+expiry dates. This version requests histories afresh; it does not claim a
 durable incremental bar archive or ten years of historical coverage.
 
 ```bash
@@ -139,8 +149,9 @@ python scripts/run_astra.py --input /path/to/source --output artifacts/astra-rep
 
 `ASTRA_CONFIG` accepts a JSON configuration matching the `Config` dataclass.
 The script runs without publishing unless `--publish` is supplied. Live runs use
-the existing TradingView client and its request pacing; Quant's bar count and
-calculation functions remain unchanged.
+the existing TradingView client and its request pacing. Production uses
+`python scripts/run_shared.py --publish`; the standalone Astra script remains
+available for offline replay. All paths cap history at 300 bars.
 
 ## Verification
 
