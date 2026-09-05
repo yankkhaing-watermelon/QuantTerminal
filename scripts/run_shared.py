@@ -70,7 +70,7 @@ def execute(output, config, report, publish=False, request_id=None):
         payload["run_id"] = "astra-" + hashlib.sha256(encoded.encode()).hexdigest()[:24]
         (astra / "latest.json").write_text(json.dumps(payload, separators=(",", ":"), allow_nan=False))
         for key, result in payload["strategies"].items():
-            pd.DataFrame(result["trades"]).to_csv(astra / f"{key}-trades.csv", index=False)
+            pd.DataFrame([{k: json.dumps(v, separators=(",", ":")) if isinstance(v, (dict, list)) else v for k, v in trade.items()} for trade in result["trades"]]).to_csv(astra / f"{key}-trades.csv", index=False)
         if publish:
             report("publish", data=payload, defer_completion=True)
     except Exception as exc:

@@ -91,7 +91,7 @@ def main():
         payload["run_id"] = "astra-" + hashlib.sha256(encoded.encode()).hexdigest()[:24]
         (root / "latest.json").write_text(json.dumps(payload, separators=(",", ":"), allow_nan=False))
         for key, result in payload["strategies"].items():
-            pd.DataFrame(result["trades"]).to_csv(root / f"{key}-trades.csv", index=False)
+            pd.DataFrame([{k: json.dumps(v, separators=(",", ":")) if isinstance(v, (dict, list)) else v for k, v in trade.items()} for trade in result["trades"]]).to_csv(root / f"{key}-trades.csv", index=False)
         publication = report("publish", data=payload)
         if publication:
             response = session.get(f"{base}/api/astra", timeout=60)

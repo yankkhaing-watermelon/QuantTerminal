@@ -46,6 +46,27 @@ class AstraTests(unittest.TestCase):
         self.assertEqual(trade["shares"] % 100, 0)
         self.assertAlmostEqual(result["metrics"]["final_equity"], self.config.capital + trade["pnl"])
 
+    def test_diagnostics_preserve_partial_exit_and_original_trigger(self):
+        frame = self.frame.copy()
+        frame.loc[self.dates[2], "Volume"] = 10000
+        trade = self.run_sim(frame)["trades"][0]
+        self.assertEqual(trade["stop_trigger"]["date"], self.dates[2].date().isoformat())
+        self.assertEqual(trade["stop_trigger"]["reason"], "gap_stop")
+        self.assertEqual(len(trade["exit_fills"]), 2)
+        self.assertEqual(sum(f["shares"] for f in trade["exit_fills"]), trade["shares"])
+        self.assertAlmostEqual(sum(f["price"] * f["shares"] - f["fee"] for f in trade["exit_fills"])
+            - trade["entry"] * trade["shares"] - trade["entry_fee"], trade["pnl"])
+        self.assertAlmostEqual(trade["pnl"] / trade["initial_risk"], trade["r"])
+        self.assertEqual(trade["signal_turnover"], 1e8)
+
+    def test_diagnostics_observe_unfillable_breach(self):
+        frame = self.frame.copy()
+        frame.loc[self.dates[2], "Volume"] = 0
+        trade = self.run_sim(frame)["trades"][0]
+        self.assertFalse(trade["stop_trigger"]["fillable_bar"])
+        self.assertEqual(trade["stop_trigger"]["date"], self.dates[2].date().isoformat())
+        self.assertEqual(trade["exit_fills"][0]["date"], self.dates[3].date().isoformat())
+
     def test_last_day_signal_cannot_fill_in_past(self):
         result = self.run_sim(signals={self.dates[-1]: self.signals[self.dates[0]]})
         self.assertEqual(result["metrics"]["open_positions"], 0)

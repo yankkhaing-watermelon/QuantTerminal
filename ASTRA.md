@@ -164,3 +164,14 @@ Strategy research references: [equity momentum](https://www.bauer.uh.edu/rsusmel
 [trend following](https://www.aqr.com/Insights/Research/Journal-Article/A-Century-of-Evidence-on-Trend-Following-Investing),
 [selection bias](https://www.davidhbailey.com/dhbpapers/deflated-sharpe.pdf).
 These references motivate research; they do not validate the selected Bursa rules.
+
+## Trade audit fields
+
+New reports retain signal-date ATR, preceding-60-session median turnover,
+market breadth, relative-strength percentile and momentum, plus initial risk
+and entry fee. The first observed stop breach is stored independently from the
+final exit reason, including whether its bar permitted execution. Each partial
+exit records date, raw and executed price, quantity, fee, stop and remaining
+quantity. Nested trigger and fill records are JSON inside the downloaded CSV.
+Older reports cannot reconstruct these fields. Diagnostic observations do not
+change entry, sizing or exit rules and do not prove corporate-action accuracy.
