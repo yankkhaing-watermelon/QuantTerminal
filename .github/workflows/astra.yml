@@ -1,0 +1,49 @@
+name: Astra Bursa Strategies
+
+on:
+  workflow_dispatch:
+    inputs:
+      request_id:
+        description: "Astra request identifier; leave blank for a direct run"
+        required: false
+        default: ""
+      config:
+        description: "Portfolio configuration JSON; {} uses documented research defaults"
+        required: false
+        default: "{}"
+  schedule:
+    - cron: "30 12 * * 1-5"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: astra-bursa-research
+  cancel-in-progress: false
+
+jobs:
+  astra:
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Validate Astra execution logic
+        run: python -m unittest discover -s tests -p 'test_astra*.py'
+      - name: Scan all Bursa stocks and publish Astra backtests
+        env:
+          ASTRA_REQUEST_ID: ${{ inputs.request_id }}
+          ASTRA_CONFIG: ${{ inputs.config || '{}' }}
+          QUANT_API_BASE: ${{ secrets.QUANT_API_BASE }}
+          PUBLISH_TOKEN: ${{ secrets.PUBLISH_TOKEN }}
+        run: python scripts/run_astra.py --bars 1500 --publish
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: astra-research-${{ github.run_id }}
+          path: artifacts/astra
+          retention-days: 90
