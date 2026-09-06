@@ -17,7 +17,7 @@ export async function onRequestPost({ request, env }) {
     const now = Math.floor(Date.now() / 1000);
     if (body.action === "publish") {
       const data = body.data;
-      if (!data || data.version !== "astra-1.0.0" || !/^astra-[a-f0-9]{24}$/.test(data.run_id || "") ||
+      if (!data || !["astra-1.0.0", "astra-2.0.0"].includes(data.version) || !/^astra-[a-f0-9]{24}$/.test(data.run_id || "") ||
           !/^\d{4}-\d{2}-\d{2}$/.test(data.scan_date || "") || !Number.isFinite(Date.parse(data.generated_at)) ||
           !data.strategies?.breakout || !data.strategies?.pullback || !data.coverage ||
           data.coverage.processed !== data.coverage.discovered || data.coverage.discovered < 900 ||

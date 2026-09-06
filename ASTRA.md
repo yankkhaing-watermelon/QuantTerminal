@@ -54,11 +54,14 @@ not required. Existing optional `GITHUB_OWNER`, `GITHUB_REPOSITORY`, and
 
 ## Shared strategy rules
 
-Daily close above SMA50 above SMA200; SMA200 above its value 20 sessions ago.
+Astra v2: daily close above both SMA50 and SMA200. SMA50 need not exceed
+SMA200, and SMA200 need not be rising.
 Rank the 126-session return independently on each historical date among stocks
 with sufficient data and at least RM1 million median traded value over the
-preceding 60 sessions. Require relative-strength percentile >=80. All qualifying
-signals are displayed; portfolio entries are sorted by momentum, then liquidity,
+preceding 60 sessions. Require relative-strength percentile >=70 (top 30%). The latest trigger per stock from the last five benchmark sessions is displayed,
+labelled Fresh or Recent with the original signal date. Prices and stops are
+from that date; recent signals are not new entry instructions. Backtests still
+enter only on the session after an original trigger; portfolio entries are sorted by momentum, then liquidity,
 then stock code. No arbitrary aggregate quant score is introduced.
 
 - **Breakout:** close above the high of the preceding 55 sessions.
@@ -183,3 +186,17 @@ or publish data. It first reproduces the original trades and portfolio equity,
 then compares the baseline with breadth filtering and doubled minimum turnover
 separately. See [the historical audit](research/astra-2026-09-06-audit.md).
 This offline path preserves long history without increasing production storage.
+
+The strict v1 model remains available to offline comparisons via `profile="strict"`.
+Run `research_astra.py --broader` to compare the agreed broader entry rules against
+the original archive. Recent-signal display does not change simulated execution.
+
+### Broader-rule historical comparison
+
+The original 2021-06-14 to 2026-09-04 archive was replayed before comparing v2.
+Breakout return changes from -3.32% to +1.64%, with drawdown worsening from
+-20.63% to -23.24%. Pullback return changes from -0.61% to +6.85%, with drawdown
+improving from -21.49% to -17.14%. Doubled-cost returns remain negative for both
+(-7.09% breakout, -1.63% pullback). Broader coverage is not validated profitability.
+Dividends/corporate-action limitations remain. Full figures and source fingerprint
+are in `research/astra-broader-comparison.json`.

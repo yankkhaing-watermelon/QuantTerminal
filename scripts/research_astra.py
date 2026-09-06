@@ -45,7 +45,7 @@ def load_archive(root):
     return original, prices, metadata, benchmark, digest.hexdigest()
 
 
-def compare(root):
+def compare(root, broader=False):
     original, prices, metadata, benchmark, fingerprint = load_archive(root)
     config = Config(**original['config'])
     if config.breadth_filter:
@@ -58,13 +58,15 @@ def compare(root):
               'status': 'RETROSPECTIVE RESEARCH ONLY',
               'limitations': ['Current-universe survivorship bias', 'Corporate actions not independently reconciled',
                   'Final period was already inspected; not untouched validation',
-                  'Three fixed comparisons, no parameter optimization', 'No deployment or automatic strategy selection'],
+                  'Fixed comparisons, no parameter optimization', 'No deployment or automatic strategy selection'],
               'comparisons': {}}
     variants = {'baseline': config, 'breadth_only': replace(config, breadth_filter=True),
                 'turnover_2x_only': replace(config, min_turnover=config.min_turnover * 2)}
+    if broader:
+        variants = {"baseline": config, "broader": config}
     for name, cfg in variants.items():
         print(f'Preparing {name}', flush=True)
-        _, signals = prepare(prices, cfg)
+        _, signals = prepare(prices, cfg, profile="broad" if name == "broader" else "strict")
         report['comparisons'][name] = {}
         for strategy in STRATEGIES:
             print(f'Simulating {name}/{strategy}', flush=True)
@@ -97,7 +99,8 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--archive', required=True, help='Extracted original artifact with latest.json and source/')
     parser.add_argument('--output', required=True)
+    parser.add_argument("--broader", action="store_true", help="Compare strict baseline with agreed top-30% and relaxed trend rules")
     args = parser.parse_args()
-    report = compare(args.archive)
+    report = compare(args.archive, broader=args.broader)
     Path(args.output).write_text(json.dumps(report, indent=2, allow_nan=False))
     print('Comparison complete; research only, no publication.', flush=True)

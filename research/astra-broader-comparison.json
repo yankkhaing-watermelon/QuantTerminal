@@ -1,0 +1,353 @@
+{
+  "source_run_id": "astra-edb1a524dc46dc6a3774b4a6",
+  "source_files_sha256": "74ef34dd8c5a262b962e1f51324ecba879c278af4dc4db0599aa81ccafeae6fb",
+  "config": {
+    "capital": 500000,
+    "risk_pct": 0.5,
+    "max_positions": 8,
+    "max_position_pct": 10,
+    "max_sector_pct": 25,
+    "min_turnover": 1000000,
+    "participation_pct": 1,
+    "initial_atr": 2.5,
+    "trailing_atr": 3,
+    "fee_bps": 20,
+    "minimum_fee": 8,
+    "slippage_bps": 10,
+    "breadth_filter": false
+  },
+  "start": "2021-06-14",
+  "end": "2026-09-04",
+  "final_period_start": "2025-02-07",
+  "status": "RETROSPECTIVE RESEARCH ONLY",
+  "limitations": [
+    "Current-universe survivorship bias",
+    "Corporate actions not independently reconciled",
+    "Final period was already inspected; not untouched validation",
+    "Fixed comparisons, no parameter optimization",
+    "No deployment or automatic strategy selection"
+  ],
+  "comparisons": {
+    "baseline": {
+      "breakout": {
+        "full": {
+          "initial_capital": 500000,
+          "final_equity": 483402.13,
+          "return_pct": -3.319574000000003,
+          "cagr_pct": -0.6441718425902354,
+          "max_drawdown_pct": -20.6329,
+          "closed_trades": 413,
+          "open_positions": 8,
+          "win_rate": 30.99273607748184,
+          "expectancy_r": -0.04223098726160948,
+          "profit_factor": 0.9056105463598686,
+          "average_win_r": 1.7089640884881692,
+          "average_loss_r": -0.8287326353176504,
+          "longest_losing_streak": 27,
+          "skipped_entries": 1176,
+          "longest_underwater_sessions": 602,
+          "stale_position_days": 0,
+          "average_exposure_pct": 30.54414853671085,
+          "yearly_returns": {
+            "2021": -2.8897199999999956,
+            "2022": -7.7454250981461525,
+            "2023": 9.906377006844046,
+            "2024": -4.420215180283559,
+            "2025": 0.18209065978664896,
+            "2026": 2.5430914017869455
+          }
+        },
+        "final_period": {
+          "initial_capital": 500000,
+          "final_equity": 523605.77,
+          "return_pct": 4.721153999999994,
+          "cagr_pct": 2.978931832372056,
+          "max_drawdown_pct": -6.0698,
+          "closed_trades": 99,
+          "open_positions": 8,
+          "win_rate": 31.313131313131315,
+          "expectancy_r": -0.032865021798500704,
+          "profit_factor": 0.9324171329218792,
+          "average_win_r": 1.6572899161483758,
+          "average_loss_r": -0.8033768317448707,
+          "longest_losing_streak": 14,
+          "skipped_entries": 418,
+          "longest_underwater_sessions": 217,
+          "stale_position_days": 0,
+          "average_exposure_pct": 33.875752649699585,
+          "yearly_returns": {
+            "2025": 2.0549699999999893,
+            "2026": 2.612497950859227
+          }
+        },
+        "double_cost": {
+          "initial_capital": 500000,
+          "final_equity": 444996.32,
+          "return_pct": -11.000736,
+          "cagr_pct": -2.20627248083608,
+          "max_drawdown_pct": -22.0297,
+          "closed_trades": 414,
+          "open_positions": 8,
+          "win_rate": 29.71014492753623,
+          "expectancy_r": -0.08995795732107076,
+          "profit_factor": 0.829608837317261,
+          "average_win_r": 1.665687901237459,
+          "average_loss_r": -0.8320350727942637,
+          "longest_losing_streak": 33,
+          "skipped_entries": 1174,
+          "longest_underwater_sessions": 1200,
+          "stale_position_days": 0,
+          "average_exposure_pct": 30.05920437466108,
+          "yearly_returns": {
+            "2021": -3.738745999999993,
+            "2022": -8.686585362787813,
+            "2023": 8.20473732721705,
+            "2024": -6.7854463141078565,
+            "2025": -1.3917155868802489,
+            "2026": 1.8021415778895156
+          }
+        }
+      },
+      "pullback": {
+        "full": {
+          "initial_capital": 500000,
+          "final_equity": 496959.04,
+          "return_pct": -0.6081920000000074,
+          "cagr_pct": -0.11671401899406852,
+          "max_drawdown_pct": -21.4872,
+          "closed_trades": 402,
+          "open_positions": 7,
+          "win_rate": 29.35323383084577,
+          "expectancy_r": -0.03318796238160844,
+          "profit_factor": 0.9607883380760279,
+          "average_win_r": 1.7905626226531903,
+          "average_loss_r": -0.7909434871495883,
+          "longest_losing_streak": 16,
+          "skipped_entries": 1203,
+          "longest_underwater_sessions": 541,
+          "stale_position_days": 0,
+          "average_exposure_pct": 29.764521766964783,
+          "yearly_returns": {
+            "2021": 7.299493999999984,
+            "2022": 0.20990779322780373,
+            "2023": 2.0511394198045263,
+            "2024": 2.0901045241817906,
+            "2025": -8.611936179708868,
+            "2026": -2.9151930260716497
+          }
+        },
+        "final_period": {
+          "initial_capital": 500000,
+          "final_equity": 465590.38,
+          "return_pct": -6.881923999999994,
+          "cagr_pct": -4.435721356887912,
+          "max_drawdown_pct": -9.1036,
+          "closed_trades": 112,
+          "open_positions": 7,
+          "win_rate": 27.67857142857143,
+          "expectancy_r": -0.1893500379500303,
+          "profit_factor": 0.6101320818728672,
+          "average_win_r": 1.3700448811632584,
+          "average_loss_r": -0.7861555008205482,
+          "longest_losing_streak": 14,
+          "skipped_entries": 308,
+          "longest_underwater_sessions": 275,
+          "stale_position_days": 0,
+          "average_exposure_pct": 32.53287395669767,
+          "yearly_returns": {
+            "2025": -3.861197999999999,
+            "2026": -3.1420466421039905
+          }
+        },
+        "double_cost": {
+          "initial_capital": 500000,
+          "final_equity": 461392.29,
+          "return_pct": -7.721542000000003,
+          "cagr_pct": -1.5265559460926004,
+          "max_drawdown_pct": -23.8093,
+          "closed_trades": 400,
+          "open_positions": 7,
+          "win_rate": 28.499999999999996,
+          "expectancy_r": -0.07361224302893583,
+          "profit_factor": 0.8894422675020682,
+          "average_win_r": 1.7296527109131337,
+          "average_loss_r": -0.7923961757191312,
+          "longest_losing_streak": 25,
+          "skipped_entries": 1209,
+          "longest_underwater_sessions": 617,
+          "stale_position_days": 0,
+          "average_exposure_pct": 29.315041176215367,
+          "yearly_returns": {
+            "2021": 6.161480000000008,
+            "2022": -0.8642927736124184,
+            "2023": 0.9131338628979746,
+            "2024": 0.8986887918371211,
+            "2025": -9.741231856795329,
+            "2026": -4.592912723037179
+          }
+        }
+      }
+    },
+    "broader": {
+      "breakout": {
+        "full": {
+          "initial_capital": 500000,
+          "final_equity": 508220.08,
+          "return_pct": 1.6440159999999926,
+          "cagr_pct": 0.312644065725709,
+          "max_drawdown_pct": -23.2371,
+          "closed_trades": 433,
+          "open_positions": 8,
+          "win_rate": 29.561200923787528,
+          "expectancy_r": -0.02005784958033272,
+          "profit_factor": 0.9446188272838428,
+          "average_win_r": 1.8778833816069511,
+          "average_loss_r": -0.8165708908654878,
+          "longest_losing_streak": 27,
+          "skipped_entries": 2117,
+          "longest_underwater_sessions": 1200,
+          "stale_position_days": 0,
+          "average_exposure_pct": 33.57431847937878,
+          "yearly_returns": {
+            "2021": -2.0749660000000003,
+            "2022": -8.67960076480545,
+            "2023": 8.870544935645452,
+            "2024": -0.9391558977590253,
+            "2025": -1.0659688365401099,
+            "2026": 6.527603540131688
+          }
+        },
+        "final_period": {
+          "initial_capital": 500000,
+          "final_equity": 534876.87,
+          "return_pct": 6.97537399999999,
+          "cagr_pct": 4.384014312488205,
+          "max_drawdown_pct": -5.8601,
+          "closed_trades": 100,
+          "open_positions": 8,
+          "win_rate": 32.0,
+          "expectancy_r": 0.028991041410958908,
+          "profit_factor": 0.9820199000029959,
+          "average_win_r": 1.7809711566374236,
+          "average_loss_r": -0.7954701892838479,
+          "longest_losing_streak": 13,
+          "skipped_entries": 742,
+          "longest_underwater_sessions": 147,
+          "stale_position_days": 0,
+          "average_exposure_pct": 35.610173528135284,
+          "yearly_returns": {
+            "2025": 0.5425039999999992,
+            "2026": 6.398159727551644
+          }
+        },
+        "double_cost": {
+          "initial_capital": 500000,
+          "final_equity": 464537.71,
+          "return_pct": -7.09245799999999,
+          "cagr_pct": -1.3983979851811434,
+          "max_drawdown_pct": -25.0998,
+          "closed_trades": 436,
+          "open_positions": 8,
+          "win_rate": 29.128440366972473,
+          "expectancy_r": -0.06867401249297271,
+          "profit_factor": 0.8653735640659037,
+          "average_win_r": 1.7721320924382304,
+          "average_loss_r": -0.8252512789210077,
+          "longest_losing_streak": 27,
+          "skipped_entries": 2105,
+          "longest_underwater_sessions": 1200,
+          "stale_position_days": 0,
+          "average_exposure_pct": 33.02282694007748,
+          "yearly_returns": {
+            "2021": -3.011281999999993,
+            "2022": -9.982062037359862,
+            "2023": 6.884997996271647,
+            "2024": -2.95247410407381,
+            "2025": -2.5968775422178902,
+            "2026": 5.323817125899444
+          }
+        }
+      },
+      "pullback": {
+        "full": {
+          "initial_capital": 500000,
+          "final_equity": 534261.13,
+          "return_pct": 6.852225999999995,
+          "cagr_pct": 1.2768215568550012,
+          "max_drawdown_pct": -17.1376,
+          "closed_trades": 374,
+          "open_positions": 8,
+          "win_rate": 30.74866310160428,
+          "expectancy_r": 0.010285104290262175,
+          "profit_factor": 1.0389475480664552,
+          "average_win_r": 1.8049627604486849,
+          "average_loss_r": -0.7865794920735164,
+          "longest_losing_streak": 14,
+          "skipped_entries": 2278,
+          "longest_underwater_sessions": 523,
+          "stale_position_days": 0,
+          "average_exposure_pct": 33.27810183619077,
+          "yearly_returns": {
+            "2021": 4.493831999999998,
+            "2022": 0.40067245308796906,
+            "2023": 6.987092387742866,
+            "2024": -1.1534793255951303,
+            "2025": -3.166275531994922,
+            "2026": -0.5426488530921425
+          }
+        },
+        "final_period": {
+          "initial_capital": 500000,
+          "final_equity": 504649.45,
+          "return_pct": 0.929890000000011,
+          "cagr_pct": 0.5907150485319423,
+          "max_drawdown_pct": -6.6266,
+          "closed_trades": 95,
+          "open_positions": 8,
+          "win_rate": 33.68421052631579,
+          "expectancy_r": -0.07404130201990218,
+          "profit_factor": 0.8773987332621722,
+          "average_win_r": 1.3545531211079793,
+          "average_loss_r": -0.7996765645610481,
+          "longest_losing_streak": 11,
+          "skipped_entries": 646,
+          "longest_underwater_sessions": 146,
+          "stale_position_days": 0,
+          "average_exposure_pct": 38.82540158337681,
+          "yearly_returns": {
+            "2025": 1.56798199999999,
+            "2026": -0.6282412896615353
+          }
+        },
+        "double_cost": {
+          "initial_capital": 500000,
+          "final_equity": 491834.93,
+          "return_pct": -1.6330139999999993,
+          "cagr_pct": -0.31469361263964934,
+          "max_drawdown_pct": -18.3349,
+          "closed_trades": 375,
+          "open_positions": 8,
+          "win_rate": 29.86666666666667,
+          "expectancy_r": -0.04054707125444839,
+          "profit_factor": 0.9404040765776946,
+          "average_win_r": 1.7190458706443326,
+          "average_loss_r": -0.7898794267398607,
+          "longest_losing_streak": 14,
+          "skipped_entries": 2286,
+          "longest_underwater_sessions": 561,
+          "stale_position_days": 0,
+          "average_exposure_pct": 32.46092991776622,
+          "yearly_returns": {
+            "2021": 3.444994000000001,
+            "2022": -0.5880419887694166,
+            "2023": 4.3879901467855476,
+            "2024": -1.5164646191263231,
+            "2025": -4.534297675606281,
+            "2026": -2.537012448437015
+          }
+        }
+      }
+    }
+  },
+  "baseline_reproduced": true
+}

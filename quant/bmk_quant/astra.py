@@ -11,7 +11,7 @@ import math
 import numpy as np
 import pandas as pd
 
-VERSION = "astra-1.0.0"
+VERSION = "astra-2.0.0"
 STRATEGIES = {
     "breakout": "55-day trend breakout",
     "pullback": "20-day trend pullback",
@@ -73,6 +73,7 @@ def features(frame):
     f["ready"] = ma200.shift(20).notna() & (frame.Volume > 0) & (f.atr > 0)
     f["above200"] = c > ma200
     f["trend"] = (c > ma50) & (ma50 > ma200) & (ma200 > ma200.shift(20))
+    f["broad_trend"] = (c > ma50) & (c > ma200)
     f["breakout"] = c > frame.High.shift().rolling(55).max()
     # Pullback confirmation is a close back above MA20 after a close at/below
     # MA20 yesterday, while the longer-term trend remains intact.
@@ -81,7 +82,9 @@ def features(frame):
     return f
 
 
-def prepare(prices, config):
+def prepare(prices, config, profile="broad"):
+    if profile not in ("strict", "broad"):
+        raise ValueError("invalid_profile")
     parts = []
     for symbol, frame in prices.items():
         f = features(frame)
@@ -97,7 +100,7 @@ def prepare(prices, config):
     table.loc[eligible, "rs_percentile"] = table.loc[eligible].groupby("date").momentum.rank(pct=True) * 100
     breadth = table.loc[table.ready].groupby("date").above200.mean() * 100
     table["breadth"] = table.date.map(breadth)
-    gate = eligible & table.trend & (table.rs_percentile >= 80)
+    gate = eligible & (table.trend if profile == "strict" else table.broad_trend) & (table.rs_percentile >= (80 if profile == "strict" else 70))
     if config.breadth_filter:
         gate &= table.breadth > 50
     signals = {}
@@ -323,6 +326,15 @@ def evidence(metrics, validation, stress, sessions, benchmark_return):
             "note": "These are review thresholds, not estimated probabilities of future profit. No strategy is promoted to live trading by this diagnostic."}
 
 
+def recent_signals(signals, calendar, sessions=5):
+    """Latest trigger per stock; age is in benchmark sessions, never calendar days."""
+    selected = {}
+    for age, date in enumerate(reversed(calendar[-sessions:])):
+        for row in signals.get(date, []):
+            selected.setdefault(row["symbol"], {**row, "signal_age_sessions": age})
+    return sorted(selected.values(), key=lambda r: (r["signal_age_sessions"], -r["momentum"], -r["turnover"], r["symbol"]))
+
+
 def build(prices, metadata, benchmark, config=Config()):
     prices = {symbol: frame.tail(300) for symbol, frame in prices.items()}
     benchmark = benchmark.tail(300)
@@ -343,21 +355,23 @@ def build(prices, metadata, benchmark, config=Config()):
         stress = simulate(prices, metadata, signals[key], dates, replace(config,
             fee_bps=config.fee_bps * 2, minimum_fee=config.minimum_fee * 2, slippage_bps=config.slippage_bps * 2))
         candidates = []
-        for rank, row in enumerate(signals[key].get(latest, []), 1):
+        for rank, row in enumerate(recent_signals(signals[key], calendar), 1):
             security = metadata[row["symbol"]]
             candidates.append({"rank": rank, "symbol": security.symbol, "tv_symbol": security.tv_symbol,
                 "name": security.name, "sector": security.sector,
                 "close": row["close"], "atr": row["atr"], "momentum_pct": row["momentum"],
                 "rs_percentile": row["rs_percentile"], "median_turnover": row["turnover"],
                 "reference_stop": max(0, tick_round(row["close"] - config.initial_atr * row["atr"])),
-                "signal_date": latest.date().isoformat()})
+                "signal_date": row["date"].date().isoformat(),
+                "signal_age_sessions": row["signal_age_sessions"],
+                "signal_status": "Fresh" if row["signal_age_sessions"] == 0 else "Recent"})
         result[key] = {"name": name, "candidates": candidates, **simulation,
             "validation": {"start": validation_dates[0].date().isoformat() if len(validation_dates) else None,
                            **validation["metrics"]}, "double_cost": stress["metrics"]}
         benchmark_return = float((benchmark_equity.iloc[-1] / config.capital - 1) * 100) if len(dates) else None
         result[key]["evidence"] = evidence(simulation["metrics"], validation["metrics"], stress["metrics"], len(dates), benchmark_return)
     daily = table.loc[table.date == latest] if not table.empty else table
-    return {"version": VERSION, "config": asdict(config), "scan_date": latest.date().isoformat(),
+    return {"version": VERSION, "rule_profile": "broad", "signal_window_sessions": 5, "config": asdict(config), "scan_date": latest.date().isoformat(),
         "history": {"benchmark_bars": len(calendar), "test_sessions": len(dates),
             "start": dates[0].date().isoformat() if len(dates) else None,
             "end": latest.date().isoformat(),
