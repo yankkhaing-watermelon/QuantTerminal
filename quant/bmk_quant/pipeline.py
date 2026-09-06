@@ -10,7 +10,7 @@ from .activity import ACTIVITY_METHODOLOGY, build_unexplained_activity
 from .wizard import WIZARD_METHODOLOGY, build_wizard_candidates
 
 
-def build_quant_payload(max_symbols: int = 0) -> tuple[dict, list[dict]]:
+def build_quant_payload(max_symbols: int = 0, market_data=None) -> tuple[dict, list[dict]]:
     """Build the production Quant payload with activity and Wizard layers.
 
     Core ranking, regime, portfolio and walk-forward calculations remain in
@@ -19,15 +19,17 @@ def build_quant_payload(max_symbols: int = 0) -> tuple[dict, list[dict]]:
     or backtest behavior. The Wizard layer reuses the same in-memory daily
     TradingView snapshot and performs no additional market-data scan.
     """
-    universe = engine.get_universe()
+    universe = tuple(market_data[1].values()) if market_data is not None else engine.get_universe()
     if len(universe) < engine.MIN_UNIVERSE:
         raise RuntimeError(f"universe_too_small:{len(universe)}<{engine.MIN_UNIVERSE}")
     if max_symbols:
         universe = universe[:max_symbols]
 
-    benchmark = engine._benchmark()
+    benchmark = market_data[2].tail(300) if market_data is not None else engine._benchmark()
     completed_session = benchmark.index[-1]
-    prices = engine._download_prices(universe)
+    prices = ({s.symbol: market_data[0][s.symbol].tail(300) for s in universe
+               if s.symbol in market_data[0] and len(market_data[0][s.symbol]) >= engine.MIN_BARS}
+              if market_data is not None else engine._download_prices(universe))
     metadata = {security.symbol: security for security in universe}
     rows = [
         row
@@ -85,6 +87,7 @@ def build_quant_payload(max_symbols: int = 0) -> tuple[dict, list[dict]]:
         "stale_symbols_excluded": len(prices) - len(rows),
         "unexplained_activity": ACTIVITY_METHODOLOGY,
         "wizard": WIZARD_METHODOLOGY,
+        "market_snapshot_hash": market_data[3]["data_hash"] if market_data is not None else None,
     }
     payload = {
         "version": "5.0.0",
@@ -131,10 +134,10 @@ def build_quant_payload(max_symbols: int = 0) -> tuple[dict, list[dict]]:
     return payload, research
 
 
-def write_artifacts(destination: str | Path, max_symbols: int = 0) -> Path:
+def write_artifacts(destination: str | Path, max_symbols: int = 0, market_data=None) -> Path:
     target = Path(destination)
     target.mkdir(parents=True, exist_ok=True)
-    payload, research = build_quant_payload(max_symbols=max_symbols)
+    payload, research = build_quant_payload(max_symbols=max_symbols, market_data=market_data)
     (target / "latest.json").write_text(
         json.dumps(payload, separators=(",", ":"), ensure_ascii=False),
         encoding="utf-8",

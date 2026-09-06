@@ -21,7 +21,7 @@ from .universe import Security, get_universe
 MIN_BARS = 220
 MIN_UNIVERSE = int(os.getenv("MIN_UNIVERSE", "900"))
 RETRY_BACKOFF_SECONDS = float(os.getenv("TV_RETRY_BACKOFF", "2"))
-TV_BARS = int(os.getenv("TV_BARS", "300"))
+TV_BARS = min(300, max(MIN_BARS, int(os.getenv("TV_BARS", "300"))))
 TV_MAX_WORKERS = int(os.getenv("TV_MAX_WORKERS", "3"))
 TV_CONNECT_GAP = float(os.getenv("TV_CONNECT_GAP", "0.25"))
 _tv_connect_lock = threading.Lock()

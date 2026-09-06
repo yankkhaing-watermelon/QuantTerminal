@@ -24,7 +24,7 @@ from bmk_quant.universe import Security
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--output", default="artifacts/astra")
-    parser.add_argument("--bars", type=int, default=1500)
+    parser.add_argument("--bars", type=int, default=300)
     parser.add_argument("--input", help="Replay a source directory from a previous Astra artifact")
     parser.add_argument("--publish", action="store_true")
     args = parser.parse_args()
@@ -56,9 +56,9 @@ def main():
             metadata = {row["symbol"]: Security(**row) for row in json.loads((src / "universe.json").read_text())}
             if any(not symbol or any(c not in "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-" for c in symbol) for symbol in metadata):
                 raise ValueError("unsafe_provider_symbol")
-            prices = {symbol: pd.read_csv(src / f"{symbol}.csv", index_col=0, parse_dates=True)
+            prices = {symbol: pd.read_csv(src / f"{symbol}.csv", index_col=0, parse_dates=True).tail(300)
                       for symbol in metadata if (src / f"{symbol}.csv").exists()}
-            benchmark = pd.read_csv(src / "benchmark.csv", index_col=0, parse_dates=True).iloc[:, 0]
+            benchmark = pd.read_csv(src / "benchmark.csv", index_col=0, parse_dates=True).iloc[:, 0].tail(300)
             coverage = json.loads((src / "coverage.json").read_text())
             # Recompute identity from replay files, so edits cannot retain the original hash.
             digest = hashlib.sha256()
@@ -67,9 +67,10 @@ def main():
             for symbol, frame in sorted(prices.items()):
                 digest.update(symbol.encode()); digest.update(frame.to_csv().encode())
             coverage["data_hash"] = digest.hexdigest()
+            coverage["requested_bars"] = 300
         else:
-            if not 300 <= args.bars <= 5000:
-                raise ValueError("bars must be between 300 and 5000")
+            if args.bars != 300:
+                raise ValueError("bars must be 300")
             prices, metadata, benchmark, coverage = collect(args.bars,
                 lambda processed, total: report("progress", processed=processed, total=total))
         if not prices:
@@ -90,7 +91,7 @@ def main():
         payload["run_id"] = "astra-" + hashlib.sha256(encoded.encode()).hexdigest()[:24]
         (root / "latest.json").write_text(json.dumps(payload, separators=(",", ":"), allow_nan=False))
         for key, result in payload["strategies"].items():
-            pd.DataFrame(result["trades"]).to_csv(root / f"{key}-trades.csv", index=False)
+            pd.DataFrame([{k: json.dumps(v, separators=(",", ":")) if isinstance(v, (dict, list)) else v for k, v in trade.items()} for trade in result["trades"]]).to_csv(root / f"{key}-trades.csv", index=False)
         publication = report("publish", data=payload)
         if publication:
             response = session.get(f"{base}/api/astra", timeout=60)

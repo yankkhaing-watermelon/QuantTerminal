@@ -127,9 +127,24 @@ def simulate(prices, metadata, signals, dates, config):
                 position["mark"] = float(bars[symbol].Open)
         equity_open = cash + sum(p["shares"] * p["mark"] for p in positions.values())
 
+        def observe_trigger(p, bar):
+            # Diagnostic only: retain the first observed breach, including bars
+            # on which the execution model cannot fill. Never alter fill rules.
+            if p["stop_trigger"] is None and bar.Low <= p["stop"]:
+                p["stop_trigger"] = {"date": date.date().isoformat(),
+                    "stop": p["stop"], "open": float(bar.Open),
+                    "reason": "gap_stop" if bar.Open <= p["stop"] else "stop",
+                    "volume": float(bar.Volume),
+                    "fillable_bar": bool(bar.Volume > 0 and bar.High != bar.Low)}
+
+        for symbol, p in positions.items():
+            if symbol in bars:
+                observe_trigger(p, bars[symbol])
+
         def sell(symbol, raw, reason):
             nonlocal cash
             p = positions[symbol]
+            observe_trigger(p, bars[symbol])
             execution = max(.005, tick_round(raw * (1 - config.slippage_bps / 10000)))
             # A limit-down/suspended bar or insufficient volume can delay a stop.
             available = int(float(bars[symbol].Volume) * config.participation_pct / 100 / 100) * 100
@@ -144,6 +159,10 @@ def simulate(prices, metadata, signals, dates, config):
             p["realized_pnl"] += pnl
             p["exit_value"] += value
             p["exit_fees"] += exit_fee
+            p["exit_fills"].append({"date": date.date().isoformat(),
+                "reason": reason, "stop": p["stop"], "raw_price": raw,
+                "price": execution, "shares": quantity, "fee": exit_fee,
+                "remaining_shares": p["shares"] - quantity})
             p["shares"] -= quantity
             p["exit_pending"] = True
             p["exit_reason"] = reason
@@ -154,7 +173,12 @@ def simulate(prices, metadata, signals, dates, config):
                     "exit": p["exit_value"] / p["initial_shares"], "shares": p["initial_shares"],
                     "initial_stop": p["initial_stop"], "pnl": p["realized_pnl"],
                     "r": p["realized_pnl"] / p["initial_risk"],
-                    "fees": p["entry_fee"] + p["exit_fees"], "reason": reason})
+                    "fees": p["entry_fee"] + p["exit_fees"], "reason": reason,
+                    "initial_risk": p["initial_risk"], "entry_fee": p["entry_fee"],
+                    "signal_atr": p["signal_atr"], "signal_turnover": p["signal_turnover"],
+                    "signal_breadth": p["signal_breadth"], "signal_rs_percentile": p["signal_rs_percentile"],
+                    "signal_momentum": p["signal_momentum"],
+                    "stop_trigger": p["stop_trigger"], "exit_fills": p["exit_fills"]})
                 del positions[symbol]
 
         exited = set()
@@ -204,6 +228,9 @@ def simulate(prices, metadata, signals, dates, config):
                 "initial_shares": shares, "shares": shares, "stop": stop, "initial_stop": stop,
                 "initial_risk": risk, "entry_cost": shares * entry + entry_fee, "entry_fee": entry_fee,
                 "atr": row["atr"], "highest_close": None, "mark": entry, "exit_pending": False,
+                "signal_atr": row["atr"], "signal_turnover": row["turnover"],
+                "signal_breadth": row.get("breadth"), "signal_rs_percentile": row.get("rs_percentile"),
+                "signal_momentum": row.get("momentum"), "stop_trigger": None, "exit_fills": [],
                 "exit_reason": None, "realized_pnl": 0., "exit_value": 0., "exit_fees": 0.}
 
         for symbol, p in list(positions.items()):
@@ -275,7 +302,30 @@ def row_close(frame, date):
     return float(frame.Close.iloc[max(0, i - 1)])
 
 
+def evidence(metrics, validation, stress, sessions, benchmark_return):
+    """Separate observed weakness from statistical readiness; never optimize it away."""
+    reasons = []
+    if sessions < 252:
+        reasons.append("Less than one year of test sessions after indicator warm-up")
+    if metrics["closed_trades"] < 30:
+        reasons.append("Fewer than 30 closed trades")
+    weaknesses = []
+    if metrics["expectancy_r"] is not None and metrics["expectancy_r"] <= 0:
+        weaknesses.append("Non-positive net expectancy")
+    if validation["closed_trades"] and (validation["expectancy_r"] or 0) <= 0:
+        weaknesses.append("Non-positive expectancy in the final-period test")
+    if stress["return_pct"] <= 0:
+        weaknesses.append("No positive portfolio return after doubled costs")
+    if benchmark_return is not None and metrics["return_pct"] < benchmark_return:
+        weaknesses.append("Full-period return below the KLCI price-return benchmark")
+    return {"status": "WEAK RESULTS" if weaknesses else "INSUFFICIENT EVIDENCE" if reasons else "RESEARCH ONLY",
+            "readiness": "NOT VALIDATED", "reasons": reasons, "weaknesses": weaknesses,
+            "note": "These are review thresholds, not estimated probabilities of future profit. No strategy is promoted to live trading by this diagnostic."}
+
+
 def build(prices, metadata, benchmark, config=Config()):
+    prices = {symbol: frame.tail(300) for symbol, frame in prices.items()}
+    benchmark = benchmark.tail(300)
     table, signals = prepare(prices, config)
     calendar = benchmark.index
     # 220 bars warm-up, independently of whether any strategy finds a trade.
@@ -304,6 +354,8 @@ def build(prices, metadata, benchmark, config=Config()):
         result[key] = {"name": name, "candidates": candidates, **simulation,
             "validation": {"start": validation_dates[0].date().isoformat() if len(validation_dates) else None,
                            **validation["metrics"]}, "double_cost": stress["metrics"]}
+        benchmark_return = float((benchmark_equity.iloc[-1] / config.capital - 1) * 100) if len(dates) else None
+        result[key]["evidence"] = evidence(simulation["metrics"], validation["metrics"], stress["metrics"], len(dates), benchmark_return)
     daily = table.loc[table.date == latest] if not table.empty else table
     return {"version": VERSION, "config": asdict(config), "scan_date": latest.date().isoformat(),
         "history": {"benchmark_bars": len(calendar), "test_sessions": len(dates),

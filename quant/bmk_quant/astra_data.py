@@ -85,6 +85,7 @@ def normalize_daily(raw, symbol):
 
 
 def fetch_frame(symbol, exchange, bars, cutoff):
+    bars = min(300, max(1, bars))
     for attempt in range(3):
         try:
             engine._pace_tradingview_connection()
@@ -101,7 +102,7 @@ def fetch_frame(symbol, exchange, bars, cutoff):
                 if not valid.all():
                     return None, "invalid_ohlcv"
                 if not frame.empty:
-                    return frame, None
+                    return frame.tail(bars), None
         except Exception:
             pass
         if attempt < 2:
@@ -109,7 +110,8 @@ def fetch_frame(symbol, exchange, bars, cutoff):
     return None, "download_failed"
 
 
-def collect(bars=1500, progress=None):
+def collect(bars=300, progress=None):
+    bars = min(300, max(221, bars))
     universe, exclusions, discovered = discover(details=True)
     if len(universe) < 900:
         raise RuntimeError(f"unexpected_universe_size:{len(universe)}; refusing_unverified_snapshot")
