@@ -81,7 +81,7 @@ test("top RUN reuses only a matching shared snapshot and configuration", async (
   const date = new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kuala_Lumpur", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
   const quant = { shared_run_id: "shared-one", scan_date: date, generated_at: new Date().toISOString() };
   sql.prepare("INSERT INTO quant_runs VALUES(?,?,?)").run(JSON.stringify(quant), date, quant.generated_at);
-  const astra = { ...quant, config: config({}) }, text = JSON.stringify(astra);
+  const astra = { version: "astra-2.0.0", ...quant, config: config({}) }, text = JSON.stringify(astra);
   sql.prepare("INSERT INTO astra_reports VALUES(?,?,?,?,?)").run("one", date, quant.generated_at, await sha256(text), text);
   const originalFetch = globalThis.fetch; let dispatches = 0;
   globalThis.fetch = async (url, options) => {

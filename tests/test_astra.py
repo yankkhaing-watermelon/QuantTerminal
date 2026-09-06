@@ -12,7 +12,7 @@ import numpy as np
 import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "quant"))
-from bmk_quant.astra import Config, build, features, prepare, simulate
+from bmk_quant.astra import Config, build, features, prepare, simulate, recent_signals
 from bmk_quant.astra_data import completed_cutoff, discover, normalize_daily
 from bmk_quant.universe import Security
 
@@ -66,6 +66,30 @@ class AstraTests(unittest.TestCase):
         self.assertFalse(trade["stop_trigger"]["fillable_bar"])
         self.assertEqual(trade["stop_trigger"]["date"], self.dates[2].date().isoformat())
         self.assertEqual(trade["exit_fills"][0]["date"], self.dates[3].date().isoformat())
+
+    def test_recent_signals_deduplicate_and_expire_by_sessions(self):
+        dates = pd.bdate_range("2026-08-24", periods=7)
+        def row(symbol, date):
+            return {"symbol": symbol, "date": date, "momentum": 20, "turnover": 1e7}
+        signals = {dates[0]: [row("OLD", dates[0])], dates[2]: [row("A", dates[2])],
+                   dates[4]: [row("B", dates[4])], dates[6]: [row("A", dates[6])]}
+        selected = recent_signals(signals, dates)
+        self.assertEqual([r["symbol"] for r in selected], ["A", "B"])
+        self.assertEqual([r["signal_age_sessions"] for r in selected], [0, 2])
+        self.assertEqual(selected[0]["date"], dates[6])
+
+    def test_broader_gate_removes_ma_order_and_slope(self):
+        from unittest.mock import patch
+        frame = history(230)
+        f = features(frame)
+        f["ready"] = True; f["turnover"] = 1e7
+        f["trend"] = False; f["broad_trend"] = True; f["breakout"] = True
+        f["momentum"] = 10
+        with patch("bmk_quant.astra.features", return_value=f):
+            _, broad = prepare({"A": frame}, self.config, "broad")
+            _, strict = prepare({"A": frame}, self.config, "strict")
+        self.assertTrue(broad["breakout"])
+        self.assertFalse(strict["breakout"])
 
     def test_last_day_signal_cannot_fill_in_past(self):
         result = self.run_sim(signals={self.dates[-1]: self.signals[self.dates[0]]})

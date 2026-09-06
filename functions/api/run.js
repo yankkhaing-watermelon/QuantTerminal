@@ -104,7 +104,7 @@ export async function onRequestPost(context) {
     const astra = row && await sha256(row.payload_json) === row.payload_hash ? JSON.parse(row.payload_json) : null;
     const matchingConfig = astra && Object.entries(parameters).every(([key, value]) => astra.config?.[key] === value);
     const matchingSnapshot = astra?.shared_run_id && astra.shared_run_id === latest?.shared_run_id;
-    if (reason && latest && matchingConfig && matchingSnapshot) {
+    if (reason && latest && matchingConfig && matchingSnapshot && astra.version === "astra-2.0.0") {
       return json({
         ok: true,
         state: "reused",
