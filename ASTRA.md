@@ -175,3 +175,11 @@ exit records date, raw and executed price, quantity, fee, stop and remaining
 quantity. Nested trigger and fill records are JSON inside the downloaded CSV.
 Older reports cannot reconstruct these fields. Diagnostic observations do not
 change entry, sizing or exit rules and do not prove corporate-action accuracy.
+
+## Offline historical comparison
+
+`research_astra.py` accepts an existing full-history artifact and does not download
+or publish data. It first reproduces the original trades and portfolio equity,
+then compares the baseline with breadth filtering and doubled minimum turnover
+separately. See [the historical audit](research/astra-2026-09-06-audit.md).
+This offline path preserves long history without increasing production storage.
